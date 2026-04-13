@@ -52,8 +52,8 @@ claude-agent-sdk-playground/
 │   │   └── registry.py             # @tool: register/list/describe agents
 │   ├── templates/
 │   │   ├── agent_main.py.tmpl      # Boilerplate: imports, main loop, message processing
-│   │   ├── tool_function.py.tmpl   # Boilerplate: @tool decorator skeleton
 │   │   └── env_example.tmpl        # .env.example template
+│   ├── utils.py                    # Shared: build_claude_md() used by builder, agents, and tests
 │   └── registry/
 │       └── agents.json             # JSON registry of all created agents
 ├── output/                         # Generated agents land here
@@ -94,6 +94,18 @@ Identity files are kept separate for editing and version control, but at startup
 ```markdown
 <!-- AUTO-GENERATED: Do not edit. Modify AGENT.md, SOUL.md, MEMORY.md, or USER.md instead. -->
 ```
+
+**`build_claude_md()` (shared utility in `agent_builder/utils.py`):**
+```python
+def build_claude_md(source_dir: str, output_dir: str, verbose: bool = False) -> None
+```
+- Reads `AGENT.md`, `SOUL.md`, `MEMORY.md`, `USER.md` (if exists) from `source_dir`
+- Concatenates with section headers (`# Agent`, `# Soul`, `# Memory`, `# User`)
+- Prepends the auto-generated comment header
+- Writes to `{output_dir}/CLAUDE.md`
+- Logs file sizes if `verbose=True`
+- Used by: `builder.py` (for builder identity), generated `agent.py` (for agent identity), `test_agent` tool (for test runs)
+- Generated agents copy this function into their own directory at scaffold time so they're self-contained
 
 This approach:
 - Uses the SDK's intended mechanism for project context (`setting_sources`)
@@ -149,9 +161,10 @@ Five custom `@tool` functions bundled into a single in-process MCP server via `c
 1. Validates `agent_name` (alphanumeric + hyphens, no spaces)
 2. Creates `output/{agent_name}/` directory
 3. Renders `agent_main.py.tmpl` -> `output/{agent_name}/agent.py` with agent_name substituted
-4. Creates empty `tools.py` with imports and `TEST_MODE = False`
-5. Renders `.env.example` from template
-6. Returns confirmation with the created file paths
+4. Renders `.env.example` from template
+5. Returns confirmation with the created file paths
+
+Note: `tools.py` is not created here — `write_tools` handles that as a complete file.
 
 **Template zone:** Entire tool is deterministic.
 
@@ -222,7 +235,7 @@ Five custom `@tool` functions bundled into a single in-process MCP server via `c
    - `max_turns=5` (test should be fast)
 5. Collects results: checks for `ResultMessage.subtype == "success"` and no `AssistantMessage.error`
 6. Resets `TEST_MODE = False` in `tools.py` (restores original)
-7. Cleans up the generated `CLAUDE.md` (it will be regenerated on next real session start)
+7. Leaves `CLAUDE.md` in place so the user can run the agent immediately after building
 8. Returns test results: which prompts passed/failed, error details for failures (including tracebacks)
 
 **Template zone:** Test harness logic is deterministic. Test prompts are authored by Claude (contextual to the agent).
