@@ -60,10 +60,11 @@ claude-agent-sdk-playground/
 │   └── {agent_name}/
 │       ├── agent.py                # Runnable entry point
 │       ├── tools.py                # Custom @tool functions
-│       ├── AGENT.md                # Operating manual
-│       ├── SOUL.md                 # Personality
-│       ├── MEMORY.md               # Persistent context
-│       ├── USER.md                 # (optional) User info
+│       ├── AGENT.md                # Operating manual (source)
+│       ├── SOUL.md                 # Personality (source)
+│       ├── MEMORY.md               # Persistent context (source)
+│       ├── USER.md                 # (optional) User info (source)
+│       ├── CLAUDE.md               # Auto-generated: combined identity (build artifact)
 │       └── .env.example            # Required env vars
 └── ...existing project files...
 ```
@@ -79,17 +80,27 @@ Each generated agent gets up to four identity files. Naming follows OpenClaw con
 | `MEMORY.md` | Persistent context: initial knowledge seeded from the builder conversation | Yes |
 | `USER.md` | User info: name, role, preferences — only if user provides this during builder conversation | No |
 
-Identity files are **not** passed as the `system_prompt` string (this would hit Windows' 8191 char CLI argument limit). Instead, each generated agent uses a short `SystemPromptPreset` with `append` that instructs the agent to read its own identity files on startup:
+Identity files are kept separate for editing and version control, but at startup the agent combines them into a `CLAUDE.md` file which the SDK loads natively via `setting_sources=["project"]`.
 
-```python
-system_prompt={
-    "type": "preset",
-    "preset": "claude_code",
-    "append": "Read and follow AGENT.md, SOUL.md, MEMORY.md, and USER.md (if it exists) in your working directory before responding to any user message.",
-}
+**Startup flow:**
+1. `build_claude_md()` reads AGENT.md + SOUL.md + MEMORY.md + USER.md (if it exists)
+2. Concatenates them with section headers into a single `CLAUDE.md`
+3. SDK loads `CLAUDE.md` automatically via `setting_sources=["project"]`
+4. Agent is ready — no CLI args, no `append` hack, fully native SDK behavior
+
+**Regeneration:** `build_claude_md()` runs at the start of **every session**, not just at build time. This means edits to any identity file (e.g., updating SOUL.md personality or adding context to MEMORY.md) are picked up on next launch without rebuilding.
+
+**`CLAUDE.md` is a build artifact** — not hand-edited. The source of truth is always the four identity files. The generated `CLAUDE.md` includes a header comment:
+```markdown
+<!-- AUTO-GENERATED: Do not edit. Modify AGENT.md, SOUL.md, MEMORY.md, or USER.md instead. -->
 ```
 
-Combined with `cwd="output/{agent_name}/"`, the agent bootstraps from its workspace files at the start of each session — the same pattern OpenClaw uses. This means identity files have no size limit.
+This approach:
+- Uses the SDK's intended mechanism for project context (`setting_sources`)
+- Keeps identity files separate for easy editing (swap personality without touching instructions)
+- Has no size limits
+- Avoids the Windows 8191 char CLI argument limit entirely
+- Matches OpenClaw's pattern of bootstrapping from workspace files
 
 ## Builder Agent Configuration
 
@@ -198,15 +209,17 @@ Five custom `@tool` functions bundled into a single in-process MCP server via `c
 **Behavior:**
 1. Reads `output/{agent_name}/tools.py` and replaces `TEST_MODE = False` with `TEST_MODE = True` (Python file I/O, not the SDK Edit tool — this runs inside a `@tool` handler)
 2. Dynamically imports the generated `tools.py` using `importlib.util.spec_from_file_location()` + `module_from_spec()` to load `tools_server` from it at runtime
-3. For each prompt, runs `query()` (one-shot, not ClaudeSDKClient) against the generated agent with:
-   - `system_prompt` using `SystemPromptPreset` with `append` (same as the generated agent uses) so the agent reads its own identity files via the Read tool
-   - `cwd` set to `output/{agent_name}/` so identity files are in the working directory
+3. Calls `build_claude_md()` in the agent's output directory to generate `CLAUDE.md` from identity files
+4. For each prompt, runs `query()` (one-shot, not ClaudeSDKClient) against the generated agent with:
+   - `setting_sources=["project"]` to load the generated `CLAUDE.md` natively
+   - `cwd` set to `output/{agent_name}/`
    - `mcp_servers={"agent_tools": tools_server}` from the dynamically imported module
-   - `allowed_tools` matching `"Read"` + `mcp__agent_tools__*` (Read is needed to load identity files, wildcard covers all custom tools)
+   - `allowed_tools` matching `mcp__agent_tools__*` (wildcard covers all custom tools)
    - `max_turns=5` (test should be fast)
 5. Collects results: checks for `ResultMessage.subtype == "success"` and no `AssistantMessage.error`
 6. Resets `TEST_MODE = False` in `tools.py` (restores original)
-7. Returns test results: which prompts passed/failed, error details for failures (including tracebacks)
+7. Cleans up the generated `CLAUDE.md` (it will be regenerated on next real session start)
+8. Returns test results: which prompts passed/failed, error details for failures (including tracebacks)
 
 **Template zone:** Test harness logic is deterministic. Test prompts are authored by Claude (contextual to the agent).
 
@@ -287,12 +300,12 @@ Builder prints: "Agent ready at `output/{name}/`. Run it with `python output/{na
 Each generated agent uses `ClaudeSDKClient` for interactive multi-turn conversation.
 
 ```python
+# build_claude_md() runs first, combining identity files into CLAUDE.md
+build_claude_md()
+
 ClaudeAgentOptions(
-    system_prompt={
-        "type": "preset",
-        "preset": "claude_code",
-        "append": "Read and follow AGENT.md, SOUL.md, MEMORY.md, and USER.md (if it exists) in your working directory before responding to any user message.",
-    },
+    # No system_prompt needed — SDK loads CLAUDE.md natively
+    setting_sources=["project"],         # Loads CLAUDE.md from cwd
     cwd="output/{agent_name}/",          # Agent runs from its own directory
     mcp_servers={"agent_tools": tools_server},
     tools=[...],                         # Availability: which built-ins appear in context
@@ -380,7 +393,7 @@ All API usage verified against the Claude Agent SDK Python documentation (docs/0
 - `@tool` decorator with `{"param": type}` input schemas
 - `create_sdk_mcp_server()` to bundle tools
 - MCP tool naming: `mcp__{server}__{tool}`
-- `SystemPromptPreset` with `append` for both builder and generated agents — avoids Windows 8191 char CLI limit by keeping the command line short; identity files are read at runtime via the Read tool (same bootstrap pattern as OpenClaw)
+- `SystemPromptPreset` with `append` for the builder agent; `setting_sources=["project"]` with auto-generated `CLAUDE.md` for generated agents — identity files are combined at startup and loaded natively by the SDK
 - `tools=` (availability) and `allowed_tools=` (permission) used as distinct layers
 - `HookMatcher` with `matcher=` regex and `hooks=` callback list
 - Tool handlers return `{"content": [...], "is_error": True}` on failure, never throw
