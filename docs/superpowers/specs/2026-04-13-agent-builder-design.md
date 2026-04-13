@@ -65,7 +65,8 @@ claude-agent-sdk-playground/
 │       ├── MEMORY.md               # Persistent context (source)
 │       ├── USER.md                 # (optional) User info (source)
 │       ├── CLAUDE.md               # Auto-generated: combined identity (build artifact)
-│       └── .env.example            # Required env vars
+│       ├── .env.example            # Required env vars
+│       └── .gitignore              # Excludes .env, __pycache__/, CLAUDE.md
 └── ...existing project files...
 ```
 
@@ -158,11 +159,16 @@ Five custom `@tool` functions bundled into a single in-process MCP server via `c
 **Input:** `{"agent_name": str, "description": str}`
 
 **Behavior:**
-1. Validates `agent_name` (alphanumeric + hyphens, no spaces)
+1. Validates `agent_name`:
+   - Must match `^[a-z0-9][a-z0-9-]*$` (lowercase alphanumeric + hyphens, must start with alphanumeric)
+   - Rejects names containing `..`, `/`, `\`, or starting with `.`
+   - Resolves the final output path and verifies it is still under the `output/` directory (path traversal guard)
+   - Returns `is_error: True` if validation fails
 2. Creates `output/{agent_name}/` directory
 3. Renders `agent_main.py.tmpl` -> `output/{agent_name}/agent.py` with agent_name substituted
 4. Renders `.env.example` from template
-5. Returns confirmation with the created file paths
+5. Generates `.gitignore` from template (excludes `.env`, `__pycache__/`, `CLAUDE.md`)
+6. Returns confirmation with the created file paths
 
 Note: `tools.py` is not created here — `write_tools` handles that as a complete file.
 
@@ -224,8 +230,8 @@ Note: `tools.py` is not created here — `write_tools` handles that as a complet
 ```
 
 **Behavior:**
-1. Reads `output/{agent_name}/tools.py` and replaces `TEST_MODE = False` with `TEST_MODE = True` (Python file I/O, not the SDK Edit tool — this runs inside a `@tool` handler)
-2. Dynamically imports the generated `tools.py` using `importlib.util.spec_from_file_location()` + `module_from_spec()` to load `tools_server` from it at runtime
+1. Reads `output/{agent_name}/tools.py` and replaces `TEST_MODE = False` with `TEST_MODE = True` (Python file I/O, not the SDK Edit tool — this runs inside a `@tool` handler). **The TEST_MODE flip is wrapped in try/finally to guarantee reset even if tests crash or are interrupted.**
+2. Dynamically imports the generated `tools.py` using `importlib.util.spec_from_file_location()` + `module_from_spec()` to load `tools_server` from it at runtime. **The import is wrapped in try/except to catch and report import-time errors (syntax errors, missing dependencies) rather than crashing the builder.**
 3. Calls `build_claude_md()` in the agent's output directory to generate `CLAUDE.md` from identity files
 4. For each prompt, runs `query()` (one-shot, not ClaudeSDKClient) against the generated agent with:
    - `setting_sources=["project"]` to load the generated `CLAUDE.md` natively
@@ -346,7 +352,7 @@ The builder selects the appropriate tier during the discovery conversation:
 | Read-write | `["Read", "Edit", "Write", "Glob", "Grep"]` | Same + MCP tools | `acceptEdits` | Code generation, refactoring |
 | Full automation | `["Read", "Edit", "Write", "Bash", "Glob", "Grep"]` | Same + MCP tools | `acceptEdits` | CI/CD, scripting, testing |
 
-All tiers include a `PreToolUse` safety hook on Bash that blocks destructive patterns (`rm -rf /`, `DROP TABLE`, etc.).
+All tiers include a `PreToolUse` safety hook on Bash that blocks common destructive patterns (`rm -rf /`, `DROP TABLE`, etc.). **Note:** This hook is a tripwire, not a sandbox — it catches obvious mistakes but can be bypassed by determined intent. Full-automation tier agents are operator-trusted by design. For true containment, use the SDK's `sandbox` option when available.
 
 ### Mock Testing
 
@@ -450,6 +456,20 @@ To validate the builder works, the first agent to build through it:
 - **Personality:** Patient teacher, explains at the right level, asks clarifying questions
 - **Memory:** Empty initially, no pre-seeded knowledge
 - **No write access** — safe for testing
+
+## Security Considerations
+
+**Path traversal:** `scaffold_agent` validates `agent_name` with strict regex (`^[a-z0-9][a-z0-9-]*$`), rejects `..`/`/`/`\`, and verifies the resolved path stays under `output/`.
+
+**Generated code execution:** `write_tools` writes Claude-authored Python to disk; `test_agent` imports it via `importlib`. This is arbitrary code execution by design — the operator (you) guides what code Claude generates. The dynamic import is wrapped in try/except to catch errors safely.
+
+**TEST_MODE integrity:** The flag flip in `test_agent` uses try/finally to guarantee reset even on crash or interruption.
+
+**Bash safety hook:** Pattern-matching tripwire, not a sandbox. Catches common destructive commands but can be bypassed. Full-automation agents are operator-trusted.
+
+**Secrets:** Generated agents include `.gitignore` (excludes `.env`, `CLAUDE.md`, `__pycache__/`) to prevent accidental commits. `.env.example` uses placeholder values only.
+
+**Builder containment:** The builder has `Write`, `Edit`, `Bash` access with `acceptEdits`. It can write anywhere on disk. This is by design — it needs to create agent directories. The operator is trusted.
 
 ## SDK Compliance
 
