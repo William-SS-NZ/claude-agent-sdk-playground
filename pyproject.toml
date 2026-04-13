@@ -1,7 +1,7 @@
 [project]
 name = "claude-agent-sdk-playground"
 version = "0.1.0"
-description = "Playground for experimenting with the Claude Agent SDK"
+description = "Agent Builder — create purpose-built Claude Agent SDK agents through conversation"
 requires-python = ">=3.10"
 dependencies = [
     "claude-agent-sdk",
@@ -11,4 +11,6 @@ dependencies = [
 [project.optional-dependencies]
 dev = [
     "python-dotenv",
+    "pytest",
+    "pytest-asyncio",
 ]

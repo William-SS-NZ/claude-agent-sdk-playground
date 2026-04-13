@@ -29,3 +29,9 @@ Thumbs.db
 # Logs
 *.log
 audit.log
+
+# Generated agents
+output/
+
+# Build artifacts
+agent_builder/CLAUDE.md
