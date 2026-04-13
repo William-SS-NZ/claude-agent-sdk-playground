@@ -132,7 +132,7 @@ ClaudeAgentOptions(
 
 **Key decisions:**
 - **`setting_sources=["project"]`** loads `CLAUDE.md` from `cwd` natively. The builder's identity files (`agent_builder/identity/AGENT.md`, `SOUL.md`, `MEMORY.md`) are combined into `agent_builder/CLAUDE.md` at startup — same pattern as generated agents.
-- **No subagents.** The builder is Claude — it can design tools and write identity files in the main conversation. Subagents add complexity and cost for no benefit here.
+- **No subagents.** The earlier plan had `tool-designer` and `prompt-engineer` subagents, but the builder itself is Claude — it can design tools and write identity files directly in the main conversation without delegating. Subagents would add token cost (each gets a fresh context) and implementation complexity for no real benefit.
 - **`acceptEdits`** auto-approves file writes. MCP tools are covered by `allowed_tools`. Bash commands that aren't filesystem ops may prompt, which is fine for safety.
 
 ## Builder Tools
