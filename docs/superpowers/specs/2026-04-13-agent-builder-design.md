@@ -20,7 +20,7 @@ Inspired by OpenClaw's config-first, multi-file identity architecture, built on 
 Templates handle structural boilerplate (imports, main loop, message processing, directory layout). Claude writes the creative parts freehand (tool handler logic, identity file content). This gives consistent structure with creative flexibility where it matters.
 
 **Template zone** (deterministic, same every time):
-- `agent.py` scaffolding: imports, `load_identity()`, main loop, error handling, cost display
+- `agent.py` scaffolding: imports, `build_claude_md()`, main loop, error handling, cost display
 - `@tool` decorator skeleton: name, description, schema, `TEST_MODE` branch
 - `.env.example` generation
 - Directory structure creation
@@ -99,18 +99,22 @@ This approach:
 - Uses the SDK's intended mechanism for project context (`setting_sources`)
 - Keeps identity files separate for easy editing (swap personality without touching instructions)
 - Has no size limits
-- Avoids the Windows 8191 char CLI argument limit entirely
+- No Windows CLI argument length issues — identity content never touches the command line
 - Matches OpenClaw's pattern of bootstrapping from workspace files
 
 ## Builder Agent Configuration
 
 ```python
+# Combine builder's own identity files into CLAUDE.md before starting
+build_claude_md(
+    source_dir="agent_builder/identity/",  # AGENT.md, SOUL.md, MEMORY.md
+    output_dir="agent_builder/",           # writes CLAUDE.md here
+)
+
 ClaudeAgentOptions(
-    system_prompt={
-        "type": "preset",
-        "preset": "claude_code",
-        "append": builder_agent_md + "\n\n" + builder_soul_md,
-    },
+    # No system_prompt — SDK loads CLAUDE.md natively
+    setting_sources=["project"],
+    cwd="agent_builder/",
     mcp_servers={"builder_tools": builder_tools_server},
     allowed_tools=[
         "mcp__builder_tools__scaffold_agent",
@@ -127,8 +131,8 @@ ClaudeAgentOptions(
 ```
 
 **Key decisions:**
-- **`SystemPromptPreset` with `append`** preserves Claude Code's built-in tool usage instructions and safety guidelines while adding the builder's identity.
-- **No subagents.** The builder is Claude — it can design tools and write identity files in the main conversation. Subagents add complexity, cost, and Windows CLI length risk for no benefit here.
+- **`setting_sources=["project"]`** loads `CLAUDE.md` from `cwd` natively. The builder's identity files (`agent_builder/identity/AGENT.md`, `SOUL.md`, `MEMORY.md`) are combined into `agent_builder/CLAUDE.md` at startup — same pattern as generated agents.
+- **No subagents.** The builder is Claude — it can design tools and write identity files in the main conversation. Subagents add complexity and cost for no benefit here.
 - **`acceptEdits`** auto-approves file writes. MCP tools are covered by `allowed_tools`. Bash commands that aren't filesystem ops may prompt, which is fine for safety.
 
 ## Builder Tools
@@ -393,11 +397,11 @@ All API usage verified against the Claude Agent SDK Python documentation (docs/0
 - `@tool` decorator with `{"param": type}` input schemas
 - `create_sdk_mcp_server()` to bundle tools
 - MCP tool naming: `mcp__{server}__{tool}`
-- `SystemPromptPreset` with `append` for the builder agent; `setting_sources=["project"]` with auto-generated `CLAUDE.md` for generated agents — identity files are combined at startup and loaded natively by the SDK
+- `setting_sources=["project"]` with auto-generated `CLAUDE.md` for both the builder and generated agents — identity files are combined at startup via `build_claude_md()` and loaded natively by the SDK
 - `tools=` (availability) and `allowed_tools=` (permission) used as distinct layers
 - `HookMatcher` with `matcher=` regex and `hooks=` callback list
 - Tool handlers return `{"content": [...], "is_error": True}` on failure, never throw
 - `asyncio.to_thread(input, "> ")` for async-safe user input
 - `max_turns` and `max_budget_usd` on all agents
 - Error handling for `ResultMessage.is_error` and `AssistantMessage.error`
-- Windows 8191 char CLI limit avoided entirely — identity files read at runtime, not passed as CLI args
+- Identity content loaded via `setting_sources=["project"]` + `CLAUDE.md`, never passed as CLI args
