@@ -1,0 +1,379 @@
+# Agent Builder — Design Spec
+
+> A standalone interactive CLI that walks users through creating purpose-built Claude Agent SDK agents via conversation.
+
+## Goal
+
+Build an Agent Builder — a meta-agent you run from the terminal that:
+1. Asks what kind of agent you need through an interactive conversation
+2. Designs custom tools, identity, and configuration based on your answers
+3. Generates a complete, runnable agent in `output/{agent_name}/`
+4. Test-runs the agent with mock tools to verify it works
+5. Self-heals if tests fail (diagnose, explain, fix, retry)
+
+Inspired by OpenClaw's config-first, multi-file identity architecture, built on the Claude Agent SDK for Python.
+
+## Architecture
+
+### Approach: Hybrid (Templates + Claude Freehand)
+
+Templates handle structural boilerplate (imports, main loop, message processing, directory layout). Claude writes the creative parts freehand (tool handler logic, identity file content). This gives consistent structure with creative flexibility where it matters.
+
+**Template zone** (deterministic, same every time):
+- `agent.py` scaffolding: imports, `load_identity()`, main loop, error handling, cost display
+- `@tool` decorator skeleton: name, description, schema, `TEST_MODE` branch
+- `.env.example` generation
+- Directory structure creation
+
+**Claude zone** (authored per agent):
+- Tool handler implementations (the actual logic inside each `@tool`)
+- `AGENT.md` content (operating manual)
+- `SOUL.md` content (personality)
+- `MEMORY.md` content (initial context)
+- `USER.md` content (optional, user info)
+- Test prompts (contextual to the agent's purpose)
+
+### Directory Structure
+
+```
+claude-agent-sdk-playground/
+├── agent_builder/
+│   ├── builder.py                  # Entry point: interactive chat loop
+│   ├── identity/
+│   │   ├── AGENT.md                # Builder's own operating manual
+│   │   ├── SOUL.md                 # Builder's personality
+│   │   └── MEMORY.md               # Tracks what agents have been built
+│   ├── tools/
+│   │   ├── __init__.py
+│   │   ├── scaffold.py             # @tool: create agent directory + boilerplate
+│   │   ├── write_identity.py       # @tool: write AGENT.md, SOUL.md, MEMORY.md, USER.md
+│   │   ├── write_tools.py          # @tool: write custom @tool functions
+│   │   ├── test_agent.py           # @tool: run mock test of generated agent
+│   │   └── registry.py             # @tool: register/list/describe agents
+│   ├── templates/
+│   │   ├── agent_main.py.tmpl      # Boilerplate: imports, main loop, message processing
+│   │   ├── tool_function.py.tmpl   # Boilerplate: @tool decorator skeleton
+│   │   └── env_example.tmpl        # .env.example template
+│   └── registry/
+│       └── agents.json             # JSON registry of all created agents
+├── output/                         # Generated agents land here
+│   └── {agent_name}/
+│       ├── agent.py                # Runnable entry point
+│       ├── tools.py                # Custom @tool functions
+│       ├── AGENT.md                # Operating manual
+│       ├── SOUL.md                 # Personality
+│       ├── MEMORY.md               # Persistent context
+│       ├── USER.md                 # (optional) User info
+│       └── .env.example            # Required env vars
+└── ...existing project files...
+```
+
+## Identity Files (OpenClaw-Inspired)
+
+Each generated agent gets up to four identity files. Naming follows OpenClaw conventions.
+
+| File | Purpose | Always created |
+|------|---------|---------------|
+| `AGENT.md` | Operating manual: purpose, available tools, rules, constraints, behavioral instructions | Yes |
+| `SOUL.md` | Personality: tone, values, communication style, boundaries | Yes |
+| `MEMORY.md` | Persistent context: initial knowledge seeded from the builder conversation | Yes |
+| `USER.md` | User info: name, role, preferences — only if user provides this during builder conversation | No |
+
+These files are concatenated and passed as the `system_prompt` string to `ClaudeAgentOptions`. The `load_identity()` function in each generated agent reads whichever files exist and joins them with `\n\n---\n\n` separators.
+
+On Windows, total identity content must stay under ~6000 chars to avoid the 8191 char CLI argument limit. The builder's `write_identity` tool enforces this and warns if content is too long.
+
+## Builder Agent Configuration
+
+```python
+ClaudeAgentOptions(
+    system_prompt={
+        "type": "preset",
+        "preset": "claude_code",
+        "append": builder_agent_md + "\n\n" + builder_soul_md,
+    },
+    mcp_servers={"builder_tools": builder_tools_server},
+    allowed_tools=[
+        "mcp__builder_tools__scaffold_agent",
+        "mcp__builder_tools__write_identity",
+        "mcp__builder_tools__write_tools",
+        "mcp__builder_tools__test_agent",
+        "mcp__builder_tools__registry",
+        "Read", "Write", "Edit", "Glob", "Grep", "Bash",
+    ],
+    permission_mode="acceptEdits",
+    max_turns=50,
+    max_budget_usd=5.00,
+)
+```
+
+**Key decisions:**
+- **`SystemPromptPreset` with `append`** preserves Claude Code's built-in tool usage instructions and safety guidelines while adding the builder's identity.
+- **No subagents.** The builder is Claude — it can design tools and write identity files in the main conversation. Subagents add complexity, cost, and Windows CLI length risk for no benefit here.
+- **`acceptEdits`** auto-approves file writes. MCP tools are covered by `allowed_tools`. Bash commands that aren't filesystem ops may prompt, which is fine for safety.
+
+## Builder Tools
+
+Five custom `@tool` functions bundled into a single in-process MCP server via `create_sdk_mcp_server()`.
+
+### `scaffold_agent`
+
+**Purpose:** Create the agent directory and boilerplate files from templates.
+
+**Input:** `{"agent_name": str, "description": str}`
+
+**Behavior:**
+1. Validates `agent_name` (alphanumeric + hyphens, no spaces)
+2. Creates `output/{agent_name}/` directory
+3. Renders `agent_main.py.tmpl` -> `output/{agent_name}/agent.py` with agent_name substituted
+4. Creates empty `tools.py` with imports and `TEST_MODE = False`
+5. Renders `.env.example` from template
+6. Returns confirmation with the created file paths
+
+**Template zone:** Entire tool is deterministic.
+
+### `write_identity`
+
+**Purpose:** Write identity files with Claude-authored content.
+
+**Input:**
+```json
+{
+    "agent_name": str,
+    "agent_md": str,
+    "soul_md": str,
+    "memory_md": str,
+    "user_md": str | null
+}
+```
+
+**Behavior:**
+1. Writes each non-null string to its corresponding file in `output/{agent_name}/`
+2. Validates total character count < 6000 (Windows CLI limit safety margin)
+3. If over limit, returns `is_error: True` with a warning and the current char count
+4. Returns confirmation with file paths and total size
+
+**Claude zone:** The content strings are authored by Claude in the conversation.
+
+### `write_tools`
+
+**Purpose:** Generate `tools.py` with custom `@tool` functions.
+
+**Input:**
+```json
+{
+    "agent_name": str,
+    "tools_code": str
+}
+```
+
+**Behavior:**
+1. Prepends a template header containing standard imports (`from claude_agent_sdk import tool, create_sdk_mcp_server, ToolAnnotations`, `from typing import Any`) and the `TEST_MODE = False` declaration
+2. Writes the `tools_code` string as-is after the header. This string is authored by Claude and must contain:
+   - All `@tool` decorated functions (each with a `if TEST_MODE:` branch)
+   - A `create_sdk_mcp_server()` call at the bottom that bundles all tool functions and assigns to `tools_server`
+3. Writes the complete file to `output/{agent_name}/tools.py`
+4. Returns confirmation
+
+**Hybrid:** The import header and `TEST_MODE` declaration are template (deterministic). Everything else — tool functions, server creation, mock responses — is authored by Claude in `tools_code`.
+
+### `test_agent`
+
+**Purpose:** Run the generated agent in mock mode and verify it works.
+
+**Input:**
+```json
+{
+    "agent_name": str,
+    "test_prompts": [str, str, str]
+}
+```
+
+**Behavior:**
+1. Reads `output/{agent_name}/tools.py` and replaces `TEST_MODE = False` with `TEST_MODE = True` (Python file I/O, not the SDK Edit tool — this runs inside a `@tool` handler)
+2. Dynamically imports the generated `tools.py` using `importlib.util.spec_from_file_location()` + `module_from_spec()` to load `tools_server` from it at runtime
+3. Reads identity files from `output/{agent_name}/` to build the system_prompt
+4. For each prompt, runs `query()` (one-shot, not ClaudeSDKClient) against the generated agent with:
+   - `system_prompt` loaded from identity files
+   - `mcp_servers={"agent_tools": tools_server}` from the dynamically imported module
+   - `allowed_tools` matching `mcp__agent_tools__*` (wildcard covers all tools)
+   - `max_turns=5` (test should be fast)
+5. Collects results: checks for `ResultMessage.subtype == "success"` and no `AssistantMessage.error`
+6. Resets `TEST_MODE = False` in `tools.py` (restores original)
+7. Returns test results: which prompts passed/failed, error details for failures (including tracebacks)
+
+**Template zone:** Test harness logic is deterministic. Test prompts are authored by Claude (contextual to the agent).
+
+### `registry`
+
+**Purpose:** Track all created agents.
+
+**Input:**
+```json
+{
+    "action": "add" | "list" | "describe",
+    "agent_name": str | null,
+    "description": str | null,
+    "tools_list": [str] | null
+}
+```
+
+**Behavior:**
+- `add`: Appends entry to `registry/agents.json` with name, description, tools, creation date, output path, status
+- `list`: Returns summary of all registered agents
+- `describe`: Returns full details for one agent
+
+**Template zone:** Entire tool is deterministic JSON read/write.
+
+## Conversation Flow
+
+### Phase 1 — Discovery
+
+The builder asks one question at a time:
+- What's the agent's purpose?
+- What should it be called?
+- What kind of tasks will it handle?
+- Does it need to read/write files, run commands, or just talk?
+
+### Phase 2 — Tool Design
+
+Based on discovery, the builder proposes custom tools:
+- "Based on what you described, I'd create these tools: `analyze_code`, `generate_report`. Sound good?"
+- User can add, remove, or modify tools
+- For each tool, the builder designs the input schema, description, and handler logic
+
+### Phase 3 — Identity
+
+The builder crafts the identity files freehand:
+- `AGENT.md` — operating manual derived from the conversation
+- `SOUL.md` — personality inferred from the use case and any stated preferences
+- `MEMORY.md` — initial context seeded from what was discussed
+- `USER.md` — only if user provided personal info
+
+### Phase 4 — Generation
+
+The builder calls its tools in sequence:
+1. `scaffold_agent` — creates directory and boilerplate from templates
+2. `write_identity` — writes the identity files
+3. `write_tools` — generates `tools.py` with `@tool` functions including `TEST_MODE` branches
+4. `registry` (action: "add") — registers the agent
+
+### Phase 5 — Test & Self-Heal
+
+1. Builder calls `test_agent` with 2-3 contextual test prompts
+2. If all pass: shows mock responses, reports success
+3. If any fail:
+   - Builder reads the error traceback
+   - Reads the generated `agent.py` and `tools.py` using its Read tool
+   - Diagnoses the root cause in the conversation
+   - Explains what went wrong to the user
+   - Asks: "Want me to fix this?"
+   - If yes: edits the generated files using Edit tool, re-runs test
+   - Retries up to 3 times
+   - After 3 failures: reports what's still broken, suggests manual fixes
+
+### Phase 6 — Handoff
+
+Builder prints: "Agent ready at `output/{name}/`. Run it with `python output/{name}/agent.py`"
+
+## Generated Agent Configuration
+
+Each generated agent uses `ClaudeSDKClient` for interactive multi-turn conversation.
+
+```python
+ClaudeAgentOptions(
+    system_prompt=load_identity(),       # Concatenated AGENT.md + SOUL.md + MEMORY.md + USER.md
+    mcp_servers={"agent_tools": tools_server},
+    tools=[...],                         # Availability: which built-ins appear in context
+    allowed_tools=[...],                 # Permission: which tools auto-approve
+    permission_mode="...",               # Tiered based on use case
+    hooks={
+        "PreToolUse": [HookMatcher(matcher="Bash", hooks=[safety_hook])],
+    },
+    max_turns=25,
+    max_budget_usd=1.00,
+)
+```
+
+### Permission Tiers
+
+The builder selects the appropriate tier during the discovery conversation:
+
+| Tier | `tools=` | `allowed_tools=` | `permission_mode` | Use case |
+|------|----------|-------------------|--------------------|----------|
+| Read-only | `["Read", "Glob", "Grep"]` | `["Read", "Glob", "Grep"]` + MCP tools | `dontAsk` | Analysis, code review |
+| Read-write | `["Read", "Edit", "Write", "Glob", "Grep"]` | Same + MCP tools | `acceptEdits` | Code generation, refactoring |
+| Full automation | `["Read", "Edit", "Write", "Bash", "Glob", "Grep"]` | Same + MCP tools | `acceptEdits` | CI/CD, scripting, testing |
+
+All tiers include a `PreToolUse` safety hook on Bash that blocks destructive patterns (`rm -rf /`, `DROP TABLE`, etc.).
+
+### Mock Testing
+
+Every generated `@tool` function includes a `TEST_MODE` branch:
+
+```python
+TEST_MODE = False
+
+@tool("analyze_code", "Analyze code for issues", {"file_path": str})
+async def analyze_code(args):
+    if TEST_MODE:
+        return {"content": [{"type": "text", "text": "Mock: Found 3 issues in main.py"}]}
+    # Real implementation
+    ...
+```
+
+The builder's `test_agent` tool flips `TEST_MODE = True` before running tests and resets it after. This ensures:
+- No real file I/O, API calls, or side effects during testing
+- Tools exercise the full `@tool` -> MCP server -> Claude -> response pipeline
+- Mock responses are contextual (authored by Claude per tool)
+
+### Message Processing
+
+Generated agents use this standard message loop (from template):
+
+```python
+async for message in client.receive_response():
+    if isinstance(message, AssistantMessage):
+        if message.error:
+            print(f"[Error: {message.error}]")
+            continue
+        for block in message.content:
+            if isinstance(block, TextBlock):
+                print(block.text)
+            elif isinstance(block, ToolUseBlock):
+                print(f"  [Tool: {block.name}]")
+    elif isinstance(message, ResultMessage):
+        if message.is_error:
+            print(f"[Failed: {message.subtype}]")
+        if message.total_cost_usd:
+            print(f"  [Cost: ${message.total_cost_usd:.4f}]")
+```
+
+## First Test Agent: "Codebase Navigator"
+
+To validate the builder works, the first agent to build through it:
+
+- **Purpose:** Navigate and explain any codebase
+- **Name:** `codebase-navigator`
+- **Tools:** One custom tool `summarize_file` that reads a file and explains what it does
+- **Tier:** Read-only (`Read`, `Glob`, `Grep` + custom MCP tool)
+- **Personality:** Patient teacher, explains at the right level, asks clarifying questions
+- **Memory:** Empty initially, no pre-seeded knowledge
+- **No write access** — safe for testing
+
+## SDK Compliance
+
+All API usage verified against the Claude Agent SDK Python documentation (docs/01-07):
+
+- `query()` for one-shot test runs, `ClaudeSDKClient` for interactive sessions
+- `@tool` decorator with `{"param": type}` input schemas
+- `create_sdk_mcp_server()` to bundle tools
+- MCP tool naming: `mcp__{server}__{tool}`
+- `SystemPromptPreset` with `append` for builder, raw string for generated agents
+- `tools=` (availability) and `allowed_tools=` (permission) used as distinct layers
+- `HookMatcher` with `matcher=` regex and `hooks=` callback list
+- Tool handlers return `{"content": [...], "is_error": True}` on failure, never throw
+- `asyncio.to_thread(input, "> ")` for async-safe user input
+- `max_turns` and `max_budget_usd` on all agents
+- Error handling for `ResultMessage.is_error` and `AssistantMessage.error`
+- Windows 8191 char CLI limit respected (identity files capped at ~6000 chars)
