@@ -355,12 +355,39 @@ The builder's `test_agent` tool flips `TEST_MODE = True` before running tests an
 - Tools exercise the full `@tool` -> MCP server -> Claude -> response pipeline
 - Mock responses are contextual (authored by Claude per tool)
 
-### Message Processing
+### Debug / Verbose Mode
 
-Generated agents use this standard message loop (from template):
+Both the builder and generated agents support a `--verbose` flag for development and troubleshooting.
+
+**Activation:**
+```bash
+# Builder
+python agent_builder/builder.py --verbose
+
+# Generated agent
+python output/my-agent/agent.py --verbose
+```
+
+**What verbose mode shows:**
+
+| Normal mode | Verbose mode adds |
+|-------------|-------------------|
+| Assistant text | All message types (System, User, Assistant, Result) |
+| Tool names | Tool inputs and full tool results |
+| Errors | Full tracebacks and raw error objects |
+| Final cost | Per-turn cost, token counts (input/output/cache), model name |
+| — | Session ID, turn count, duration |
+| — | MCP server connection status on startup |
+| — | `CLAUDE.md` generation log (which identity files found, total size) |
+| — | `SystemMessage` init data (available tools, settings loaded) |
+
+**Implementation:** A `VERBOSE = False` flag in the template, set via `argparse` from CLI args. The message loop checks it:
 
 ```python
 async for message in client.receive_response():
+    if VERBOSE:
+        print(f"[{message.__class__.__name__}] {message}")
+
     if isinstance(message, AssistantMessage):
         if message.error:
             print(f"[Error: {message.error}]")
@@ -369,13 +396,35 @@ async for message in client.receive_response():
             if isinstance(block, TextBlock):
                 print(block.text)
             elif isinstance(block, ToolUseBlock):
-                print(f"  [Tool: {block.name}]")
+                if VERBOSE:
+                    print(f"  [Tool: {block.name}] Input: {block.input}")
+                else:
+                    print(f"  [Tool: {block.name}]")
     elif isinstance(message, ResultMessage):
         if message.is_error:
             print(f"[Failed: {message.subtype}]")
+        if VERBOSE:
+            print(f"  [Session: {message.session_id}]")
+            print(f"  [Turns: {message.num_turns}, Duration: {message.duration_ms}ms]")
+            if message.usage:
+                print(f"  [Tokens: in={message.usage.get('input_tokens', '?')} out={message.usage.get('output_tokens', '?')}]")
         if message.total_cost_usd:
             print(f"  [Cost: ${message.total_cost_usd:.4f}]")
+    elif VERBOSE and isinstance(message, SystemMessage):
+        if message.subtype == "init":
+            print(f"  [Init: {message.data}]")
 ```
+
+**For `build_claude_md()` in verbose mode:**
+```
+[build_claude_md] Found: AGENT.md (1204 chars), SOUL.md (856 chars), MEMORY.md (312 chars)
+[build_claude_md] USER.md not found, skipping
+[build_claude_md] Wrote CLAUDE.md (2452 chars total)
+```
+
+### Message Processing
+
+Generated agents use the message loop shown above in verbose mode. In normal mode (default), the same loop but without the verbose branches — only assistant text, tool names, errors, and cost are shown.
 
 ## First Test Agent: "Codebase Navigator"
 
