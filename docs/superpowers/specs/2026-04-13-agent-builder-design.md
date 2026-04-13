@@ -79,9 +79,17 @@ Each generated agent gets up to four identity files. Naming follows OpenClaw con
 | `MEMORY.md` | Persistent context: initial knowledge seeded from the builder conversation | Yes |
 | `USER.md` | User info: name, role, preferences — only if user provides this during builder conversation | No |
 
-These files are concatenated and passed as the `system_prompt` string to `ClaudeAgentOptions`. The `load_identity()` function in each generated agent reads whichever files exist and joins them with `\n\n---\n\n` separators.
+Identity files are **not** passed as the `system_prompt` string (this would hit Windows' 8191 char CLI argument limit). Instead, each generated agent uses a short `SystemPromptPreset` with `append` that instructs the agent to read its own identity files on startup:
 
-On Windows, total identity content must stay under ~6000 chars to avoid the 8191 char CLI argument limit. The builder's `write_identity` tool enforces this and warns if content is too long.
+```python
+system_prompt={
+    "type": "preset",
+    "preset": "claude_code",
+    "append": "Read and follow AGENT.md, SOUL.md, MEMORY.md, and USER.md (if it exists) in your working directory before responding to any user message.",
+}
+```
+
+Combined with `cwd="output/{agent_name}/"`, the agent bootstraps from its workspace files at the start of each session — the same pattern OpenClaw uses. This means identity files have no size limit.
 
 ## Builder Agent Configuration
 
@@ -149,9 +157,7 @@ Five custom `@tool` functions bundled into a single in-process MCP server via `c
 
 **Behavior:**
 1. Writes each non-null string to its corresponding file in `output/{agent_name}/`
-2. Validates total character count < 6000 (Windows CLI limit safety margin)
-3. If over limit, returns `is_error: True` with a warning and the current char count
-4. Returns confirmation with file paths and total size
+2. Returns confirmation with file paths and total character count
 
 **Claude zone:** The content strings are authored by Claude in the conversation.
 
@@ -192,11 +198,11 @@ Five custom `@tool` functions bundled into a single in-process MCP server via `c
 **Behavior:**
 1. Reads `output/{agent_name}/tools.py` and replaces `TEST_MODE = False` with `TEST_MODE = True` (Python file I/O, not the SDK Edit tool — this runs inside a `@tool` handler)
 2. Dynamically imports the generated `tools.py` using `importlib.util.spec_from_file_location()` + `module_from_spec()` to load `tools_server` from it at runtime
-3. Reads identity files from `output/{agent_name}/` to build the system_prompt
-4. For each prompt, runs `query()` (one-shot, not ClaudeSDKClient) against the generated agent with:
-   - `system_prompt` loaded from identity files
+3. For each prompt, runs `query()` (one-shot, not ClaudeSDKClient) against the generated agent with:
+   - `system_prompt` using `SystemPromptPreset` with `append` (same as the generated agent uses) so the agent reads its own identity files via the Read tool
+   - `cwd` set to `output/{agent_name}/` so identity files are in the working directory
    - `mcp_servers={"agent_tools": tools_server}` from the dynamically imported module
-   - `allowed_tools` matching `mcp__agent_tools__*` (wildcard covers all tools)
+   - `allowed_tools` matching `"Read"` + `mcp__agent_tools__*` (Read is needed to load identity files, wildcard covers all custom tools)
    - `max_turns=5` (test should be fast)
 5. Collects results: checks for `ResultMessage.subtype == "success"` and no `AssistantMessage.error`
 6. Resets `TEST_MODE = False` in `tools.py` (restores original)
@@ -282,7 +288,12 @@ Each generated agent uses `ClaudeSDKClient` for interactive multi-turn conversat
 
 ```python
 ClaudeAgentOptions(
-    system_prompt=load_identity(),       # Concatenated AGENT.md + SOUL.md + MEMORY.md + USER.md
+    system_prompt={
+        "type": "preset",
+        "preset": "claude_code",
+        "append": "Read and follow AGENT.md, SOUL.md, MEMORY.md, and USER.md (if it exists) in your working directory before responding to any user message.",
+    },
+    cwd="output/{agent_name}/",          # Agent runs from its own directory
     mcp_servers={"agent_tools": tools_server},
     tools=[...],                         # Availability: which built-ins appear in context
     allowed_tools=[...],                 # Permission: which tools auto-approve
@@ -369,11 +380,11 @@ All API usage verified against the Claude Agent SDK Python documentation (docs/0
 - `@tool` decorator with `{"param": type}` input schemas
 - `create_sdk_mcp_server()` to bundle tools
 - MCP tool naming: `mcp__{server}__{tool}`
-- `SystemPromptPreset` with `append` for builder, raw string for generated agents
+- `SystemPromptPreset` with `append` for both builder and generated agents — avoids Windows 8191 char CLI limit by keeping the command line short; identity files are read at runtime via the Read tool (same bootstrap pattern as OpenClaw)
 - `tools=` (availability) and `allowed_tools=` (permission) used as distinct layers
 - `HookMatcher` with `matcher=` regex and `hooks=` callback list
 - Tool handlers return `{"content": [...], "is_error": True}` on failure, never throw
 - `asyncio.to_thread(input, "> ")` for async-safe user input
 - `max_turns` and `max_budget_usd` on all agents
 - Error handling for `ResultMessage.is_error` and `AssistantMessage.error`
-- Windows 8191 char CLI limit respected (identity files capped at ~6000 chars)
+- Windows 8191 char CLI limit avoided entirely — identity files read at runtime, not passed as CLI args
