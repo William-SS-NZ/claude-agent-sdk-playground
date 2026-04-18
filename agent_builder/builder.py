@@ -24,8 +24,11 @@ Or (single-prompt shorthand):
 import argparse
 import asyncio
 import json
+import logging
 import sys
 import time
+import traceback
+from datetime import datetime
 from pathlib import Path
 
 from claude_agent_sdk import (
@@ -51,6 +54,31 @@ class _NullCtx:
 
 BUILDER_DIR = Path(__file__).parent.resolve()
 IDENTITY_DIR = BUILDER_DIR / "identity"
+LOGS_DIR = BUILDER_DIR / "logs"
+
+
+def _setup_run_logger() -> tuple[logging.Logger, Path]:
+    """Per-invocation logfile at agent_builder/logs/builder-YYYYMMDD-HHMMSS.log.
+
+    Every builder run gets its own timestamped file so forensic analysis of
+    a specific session is straightforward. Returns (logger, log_path).
+    """
+    LOGS_DIR.mkdir(parents=True, exist_ok=True)
+    stamp = datetime.now().strftime("%Y%m%d-%H%M%S")
+    log_path = LOGS_DIR / f"builder-{stamp}.log"
+
+    # Use a unique logger name per run so the FileHandler isn't shared across
+    # repeated main() invocations in the same process (e.g. tests).
+    logger = logging.getLogger(f"agent_builder.run.{stamp}")
+    logger.setLevel(logging.DEBUG)
+    fh = logging.FileHandler(log_path, encoding="utf-8")
+    fh.setFormatter(logging.Formatter(
+        "%(asctime)s [%(levelname)s] %(message)s",
+        datefmt="%Y-%m-%d %H:%M:%S",
+    ))
+    logger.addHandler(fh)
+    logger.propagate = False
+    return logger, log_path
 
 
 # Map short tool names to human phase labels for the spinner
@@ -96,6 +124,10 @@ def _build_options() -> ClaudeAgentOptions:
             "mcp__builder_tools__edit_agent",
             "mcp__builder_tools__rollback",
             "Read", "Write", "Edit", "Glob", "Grep", "Bash",
+            # Web access for design research — look up current API docs,
+            # verify library/tool names, check best practices before
+            # designing tools and writing identity files.
+            "WebFetch", "WebSearch",
         ],
         permission_mode="acceptEdits",
         max_turns=50,
@@ -103,7 +135,14 @@ def _build_options() -> ClaudeAgentOptions:
     )
 
 
-async def _run_one_query(client: ClaudeSDKClient, user_input: str, verbose: bool) -> None:
+async def _run_one_query(
+    client: ClaudeSDKClient,
+    user_input: str,
+    verbose: bool,
+    logger: logging.Logger | None = None,
+) -> None:
+    if logger:
+        logger.info("user_input: %s", user_input)
     await client.query(user_input)
     spinner = Spinner("thinking") if not verbose else None
     if spinner:
@@ -117,6 +156,8 @@ async def _run_one_query(client: ClaudeSDKClient, user_input: str, verbose: bool
 
             if isinstance(message, AssistantMessage):
                 if message.error:
+                    if logger:
+                        logger.error("assistant error: %s", message.error)
                     ctx = spinner.paused() if spinner else _NullCtx()
                     with ctx:
                         print(f"[Error: {message.error}]")
@@ -130,8 +171,12 @@ async def _run_one_query(client: ClaudeSDKClient, user_input: str, verbose: bool
                     ctx = spinner.paused() if spinner else _NullCtx()
                     with ctx:
                         if isinstance(block, TextBlock):
+                            if logger:
+                                logger.info("assistant_text: %s", block.text)
                             print(block.text)
                         elif isinstance(block, ToolUseBlock):
+                            if logger:
+                                logger.info("tool_use: name=%s input=%s", block.name, block.input)
                             banner = _phase_banner(block.name, phases_seen)
                             if banner:
                                 print(banner)
@@ -144,6 +189,18 @@ async def _run_one_query(client: ClaudeSDKClient, user_input: str, verbose: bool
             elif isinstance(message, ResultMessage):
                 if spinner and message.total_cost_usd:
                     spinner.set_cost(message.total_cost_usd)
+                if logger:
+                    logger.info(
+                        "result: subtype=%s turns=%s duration_ms=%s cost_usd=%s denials=%d errors=%d",
+                        message.subtype, message.num_turns, message.duration_ms,
+                        message.total_cost_usd,
+                        len(message.permission_denials or []),
+                        len(message.errors or []),
+                    )
+                    if message.permission_denials:
+                        logger.warning("permission_denials: %s", message.permission_denials)
+                    if message.errors:
+                        logger.error("result_errors: %s", message.errors)
                 ctx = spinner.paused() if spinner else _NullCtx()
                 with ctx:
                     elapsed = time.monotonic() - started
@@ -169,7 +226,11 @@ async def _run_one_query(client: ClaudeSDKClient, user_input: str, verbose: bool
             await spinner.stop()
 
 
-async def _interactive_loop(client: ClaudeSDKClient, verbose: bool) -> None:
+async def _interactive_loop(
+    client: ClaudeSDKClient,
+    verbose: bool,
+    logger: logging.Logger | None = None,
+) -> None:
     print("\n  Agent Builder ready. Describe what agent you'd like to build.")
     print("  Type 'exit' to quit. Ctrl+C cancels the current response.\n")
 
@@ -177,25 +238,42 @@ async def _interactive_loop(client: ClaudeSDKClient, verbose: bool) -> None:
         try:
             user_input = await asyncio.to_thread(input, "> ")
         except (EOFError, KeyboardInterrupt):
+            if logger:
+                logger.info("interactive loop interrupted by user")
             print()  # newline so the next prompt isn't glued to the traceback
             break
         if user_input.strip().lower() in ("exit", "quit"):
+            if logger:
+                logger.info("interactive loop exited via 'exit'/'quit'")
             break
         if not user_input.strip():
             continue
 
         try:
-            await _run_one_query(client, user_input, verbose)
+            await _run_one_query(client, user_input, verbose, logger=logger)
         except KeyboardInterrupt:
+            if logger:
+                logger.warning("query cancelled mid-flight by user")
             print("\n  [Cancelled — returning to prompt. Type 'exit' to quit.]\n")
+        except Exception as e:
+            if logger:
+                logger.error("query raised: %s\n%s", e, traceback.format_exc())
+            raise
 
 
-async def _batch_run(client: ClaudeSDKClient, prompts: list[str], verbose: bool) -> None:
+async def _batch_run(
+    client: ClaudeSDKClient,
+    prompts: list[str],
+    verbose: bool,
+    logger: logging.Logger | None = None,
+) -> None:
     for i, prompt in enumerate(prompts, 1):
+        if logger:
+            logger.info("batch prompt %d/%d: %s", i, len(prompts), prompt)
         print(f"\n  ══════════════════════════════════════════════════════════════")
         print(f"   Prompt {i}/{len(prompts)}: {prompt}")
         print(f"  ══════════════════════════════════════════════════════════════")
-        await _run_one_query(client, prompt, verbose)
+        await _run_one_query(client, prompt, verbose, logger=logger)
 
 
 def _load_spec(spec_path: str) -> list[str]:
@@ -311,6 +389,13 @@ async def main() -> None:
 
     verbose = args.verbose
 
+    logger, log_path = _setup_run_logger()
+    logger.info(
+        "##### builder run start — verbose=%s prompt=%s spec=%s #####",
+        verbose, bool(args.prompt), bool(args.spec),
+    )
+    print(f"  Run log: {log_path}")
+
     build_claude_md(
         source_dir=str(IDENTITY_DIR),
         output_dir=str(BUILDER_DIR),
@@ -324,11 +409,17 @@ async def main() -> None:
     else:
         prompts = None
 
-    async with ClaudeSDKClient(options=_build_options()) as client:
-        if prompts is None:
-            await _interactive_loop(client, verbose)
-        else:
-            await _batch_run(client, prompts, verbose)
+    try:
+        async with ClaudeSDKClient(options=_build_options()) as client:
+            if prompts is None:
+                await _interactive_loop(client, verbose, logger=logger)
+            else:
+                await _batch_run(client, prompts, verbose, logger=logger)
+    except Exception as e:
+        logger.error("builder run failed: %s\n%s", e, traceback.format_exc())
+        raise
+    finally:
+        logger.info("##### builder run end #####")
 
 
 if __name__ == "__main__":

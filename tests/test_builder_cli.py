@@ -56,3 +56,42 @@ def test_phase_banner_fires_once_per_tool():
     second = builder_mod._phase_banner("mcp__builder_tools__test_agent", seen)
     assert first is not None and "Phase 5" in first
     assert second is None
+
+
+def test_setup_run_logger_creates_timestamped_file(tmp_path: Path, monkeypatch):
+    """Each builder invocation gets its own builder-YYYYMMDD-HHMMSS.log."""
+    monkeypatch.setattr(builder_mod, "LOGS_DIR", tmp_path / "logs")
+
+    logger, log_path = builder_mod._setup_run_logger()
+
+    assert log_path.parent == tmp_path / "logs"
+    assert log_path.name.startswith("builder-")
+    assert log_path.name.endswith(".log")
+    # Stamp portion: builder-YYYYMMDD-HHMMSS.log → 15-char stamp
+    stamp = log_path.stem.removeprefix("builder-")
+    assert len(stamp) == 15  # YYYYMMDD-HHMMSS
+    assert stamp[8] == "-"
+
+    logger.info("hello")
+    for h in logger.handlers:
+        h.flush()
+    assert "hello" in log_path.read_text(encoding="utf-8")
+
+
+def test_setup_run_logger_isolates_runs(tmp_path: Path, monkeypatch):
+    """Two runs in the same process get different files (no shared handler)."""
+    import time as _time
+    monkeypatch.setattr(builder_mod, "LOGS_DIR", tmp_path / "logs")
+
+    _l1, p1 = builder_mod._setup_run_logger()
+    _time.sleep(1.05)  # tick the second so timestamps differ
+    _l2, p2 = builder_mod._setup_run_logger()
+
+    assert p1 != p2
+
+
+def test_web_tools_in_allowed_tools():
+    """Builder should be able to research live API docs while designing tools."""
+    opts = builder_mod._build_options()
+    assert "WebFetch" in opts.allowed_tools
+    assert "WebSearch" in opts.allowed_tools

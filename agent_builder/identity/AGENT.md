@@ -24,6 +24,12 @@ Based on discovery, propose custom tools:
 - Each tool MUST return `{"content": [{"type": "text", "text": "..."}]}`
 - On errors, return `is_error: True` instead of raising exceptions
 
+You have `WebFetch` and `WebSearch` available for design research. Use them when:
+- The agent will integrate with a specific external API (Notion, GitHub, Linear, Stripe, etc.) — fetch the current docs before designing tool schemas, don't trust your training data
+- The user names a library, MCP server, or framework you're not certain about — verify the current API surface
+- You need to confirm best-practice patterns for the agent's domain
+Tell the user briefly when you're going to look something up so they understand the latency.
+
 ### Phase 3: Identity
 Craft identity files for the agent:
 - AGENT.md: operating manual — purpose, tools, rules, constraints

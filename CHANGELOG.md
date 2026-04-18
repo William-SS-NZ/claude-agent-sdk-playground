@@ -3,6 +3,13 @@
 All notable changes to this project are documented here.
 Format loosely follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [0.5.3] - 2026-04-18
+
+### Added
+- **Web access for design research**: builder's `allowed_tools` now includes `WebFetch` and `WebSearch`. The builder can fetch current API docs and verify library/tool names before designing tool schemas, instead of relying on possibly-stale training data. AGENT.md Phase 2 explicitly tells it when to look things up (external API integrations, named libraries it isn't certain about, best-practice questions for the agent's domain) and to mention it briefly to the user so the latency makes sense.
+- **Per-run timestamped builder log** at `agent_builder/logs/builder-YYYYMMDD-HHMMSS.log`. Every invocation gets its own file. Captures user inputs, every tool call (name + args), every assistant text block, ResultMessage details (subtype / num_turns / duration / cost / permission_denials / errors), startup/shutdown markers, and uncaught exceptions with tracebacks. Survives across runs without rotation issues — each run writes to its own file. Startup banner prints the path.
+- 3 new tests covering the per-run logger (timestamped filename, two runs get different files, web tools advertised in `_build_options()`).
+
 ## [0.5.2] - 2026-04-18
 
 ### Changed
