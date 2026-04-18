@@ -37,12 +37,6 @@ def _load_tools_server(tools_py_path: Path) -> Any:
     return module.tools_server
 
 
-@tool(
-    "test_agent",
-    "Run a generated agent in mock mode (TEST_MODE=True) to verify it works. "
-    "Sends test prompts and reports pass/fail for each.",
-    {"agent_name": str, "test_prompts": list},
-)
 async def test_agent(args: dict[str, Any], output_base: str = "output") -> dict[str, Any]:
     agent_name = args["agent_name"]
     test_prompts: list[str] = args["test_prompts"]
@@ -127,3 +121,12 @@ async def test_agent(args: dict[str, Any], output_base: str = "output") -> dict[
         "content": [{"type": "text", "text": "\n".join(lines)}],
         "is_error": not all_passed,
     }
+
+
+# MCP tool registration
+test_agent_tool = tool(
+    "test_agent",
+    "Run a generated agent in mock mode (TEST_MODE=True) to verify it works. "
+    "Sends test prompts and reports pass/fail for each.",
+    {"agent_name": str, "test_prompts": list},
+)(test_agent)
