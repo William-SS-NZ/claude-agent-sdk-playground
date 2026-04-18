@@ -12,6 +12,24 @@ TEMPLATES_DIR = Path(__file__).parent.parent / "templates"
 
 NAME_PATTERN = re.compile(r"^[a-z0-9][a-z0-9-]*$")
 
+# Placeholders the scaffold template MUST contain. Single source of truth —
+# doctor.py imports this to keep its drift guard in sync with what scaffold
+# actually substitutes. Every entry here must appear both in the template
+# and in the .replace() chain inside scaffold_agent().
+REQUIRED_PLACEHOLDERS = (
+    "{{agent_name}}",
+    "{{agent_description}}",
+    "{{builder_version}}",
+    "{{tools_list}}",
+    "{{allowed_tools_list}}",
+    "{{permission_mode}}",
+    "{{max_turns}}",
+    "{{max_budget_usd}}",
+    "{{cli_args_block}}",
+    "{{cli_dispatch_block}}",
+    "{{cli_help_epilog}}",
+)
+
 GITIGNORE_CONTENT = """\
 .env
 .env.local
@@ -86,7 +104,9 @@ def _validate_agent_name(agent_name: str, output_base: str) -> str | None:
 
     resolved = (Path(output_base) / agent_name).resolve()
     base_resolved = Path(output_base).resolve()
-    if not str(resolved).startswith(str(base_resolved)):
+    try:
+        resolved.relative_to(base_resolved)
+    except ValueError:
         return f"Invalid agent name '{agent_name}'. Path traversal detected."
 
     return None
@@ -121,24 +141,7 @@ async def scaffold_agent(args: dict[str, Any], output_base: str = "output") -> d
     template_path = TEMPLATES_DIR / "agent_main.py.tmpl"
     template = template_path.read_text(encoding="utf-8")
 
-    # Fail loudly if the template is missing any placeholder scaffold expects
-    # to fill — catches the "someone deleted the line and we silently stopped
-    # stamping the version" class of bug. Every entry here must appear in both
-    # the template and in the .replace() chain below.
-    _REQUIRED_PLACEHOLDERS = (
-        "{{agent_name}}",
-        "{{agent_description}}",
-        "{{builder_version}}",
-        "{{tools_list}}",
-        "{{allowed_tools_list}}",
-        "{{permission_mode}}",
-        "{{max_turns}}",
-        "{{max_budget_usd}}",
-        "{{cli_args_block}}",
-        "{{cli_dispatch_block}}",
-        "{{cli_help_epilog}}",
-    )
-    missing_in_template = [p for p in _REQUIRED_PLACEHOLDERS if p not in template]
+    missing_in_template = [p for p in REQUIRED_PLACEHOLDERS if p not in template]
     if missing_in_template:
         return {
             "content": [{"type": "text", "text": (
@@ -212,7 +215,7 @@ scaffold_agent_tool = tool(
     "Create the directory structure and boilerplate files for a new agent. "
     "tools_list: builtin tool names (e.g. ['Read','Edit','Bash']). "
     "allowed_tools_list: full allowed list including mcp__agent_tools__* entries. "
-    "permission_mode: 'default', 'acceptEdits', 'bypassPermissions', or 'plan'. "
+    "permission_mode: one of 'default', 'acceptEdits', 'bypassPermissions', 'plan', 'dontAsk', 'auto'. "
     "max_turns: safety cap on SDK turns per user message (default 25, raise for iterative agents). "
     "max_budget_usd: per-conversation USD budget cap (default 1.00). "
     "cli_mode: when true (default), the generated agent.py also accepts "

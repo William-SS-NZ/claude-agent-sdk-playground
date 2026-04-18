@@ -54,6 +54,12 @@ def test_validate_rejects_registry(sandbox_builder: Path):
     assert err and "deny" in err.lower()
 
 
+def test_validate_rejects_self_heal_file(sandbox_builder: Path):
+    """self_heal.py can't be rewritten via self-heal — confirmation gate stays put."""
+    _, err = _validate_target("tools/self_heal.py")
+    assert err and "deny" in err.lower()
+
+
 def test_validate_accepts_identity(sandbox_builder: Path):
     path, err = _validate_target("identity/AGENT.md")
     assert err is None

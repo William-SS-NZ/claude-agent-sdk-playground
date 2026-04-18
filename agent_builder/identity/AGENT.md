@@ -69,7 +69,7 @@ If you notice your own workflow broke — wrong phase order, missing instruction
 
 1. **Only after the immediate task is handled.** Finish or abandon the user's current build first; don't derail mid-flow.
 2. **Only on observed failures**, not speculative improvements. Cite the specific failure in the `why` field ("when I ran X, I saw Y, because Z").
-3. **Allowed targets only**: `identity/*.md`, `tools/*.py`, `templates/*`, `utils.py`, `builder.py`. Never `registry/agents.json`, never `output/`, never `tests/`.
+3. **Allowed targets only**: `identity/*.md`, `tools/*.py`, `templates/*`, `utils.py`, `builder.py`. Never `registry/agents.json`, never `tools/self_heal.py` (the confirmation gate can't be weakened via self-heal), never `output/`, never `tests/`.
 4. **Every proposal must include**: a one-sentence `summary`, a `why` grounded in the session, a short `before_snippet` and `after_snippet` (a few lines each — no full-file dumps), and either an `old_string`/`new_string` pair or `full_content`.
 5. **The tool blocks on a hard stdin confirmation.** If the user declines, accept it and move on. Do NOT retry the same proposal.
 6. **Changes take effect next session** — the current process will not see them. Tell the user this explicitly.

@@ -25,7 +25,12 @@ BUILDER_DIR = Path(__file__).parent.parent.resolve()
 ALLOWED_SUBDIRS = ("identity", "tools", "templates")
 ALLOWED_TOP_FILES = ("utils.py", "builder.py")
 # Explicit deny list to keep safety-critical surfaces out of reach.
-DENY_FILES = {"registry/agents.json"}
+# self_heal.py forbids editing itself so the confirmation gate can't be
+# removed via self-heal. registry/agents.json is user data, not code.
+DENY_FILES = {
+    "registry/agents.json",
+    "tools/self_heal.py",
+}
 
 AUDIT_LOG_PATH = BUILDER_DIR / "self-heal.log"
 
@@ -114,6 +119,20 @@ async def _prompt_confirm() -> bool:
     return answer.strip().lower() in ("y", "yes")
 
 
+def _make_backup_path(target: Path) -> Path | None:
+    """Return a `.bak-<stamp>` sibling path or None on sub-second collision.
+
+    Matches the rollback tool's collision behaviour (abort, don't clobber)
+    so an `edit_agent` / `propose_self_change` loop can't silently lose the
+    original by overwriting a just-written backup.
+    """
+    stamp = datetime.now().strftime("%Y%m%d-%H%M%S")
+    candidate = target.with_suffix(target.suffix + f".bak-{stamp}")
+    if candidate.exists():
+        return None
+    return candidate
+
+
 async def propose_self_change(args: dict[str, Any]) -> dict[str, Any]:
     target_path: str = args["target_path"]
     summary: str = args["summary"]
@@ -160,7 +179,19 @@ async def propose_self_change(args: dict[str, Any]) -> dict[str, Any]:
     # Apply
     if full_content is not None:
         if resolved.exists():
-            backup = resolved.with_suffix(resolved.suffix + f".bak-{datetime.now().strftime('%Y%m%d-%H%M%S')}")
+            backup = _make_backup_path(resolved)
+            if backup is None:
+                _audit_logger.warning(
+                    "APPLY_FAILED target=%s reason=backup_collision",
+                    f"agent_builder/{rel}",
+                )
+                return {
+                    "content": [{"type": "text", "text": (
+                        f"backup path for {rel} already exists — refusing to clobber. "
+                        "Wait a second and retry."
+                    )}],
+                    "is_error": True,
+                }
             backup.write_text(resolved.read_text(encoding="utf-8"), encoding="utf-8")
         else:
             backup = None
@@ -186,7 +217,19 @@ async def propose_self_change(args: dict[str, Any]) -> dict[str, Any]:
                 "content": [{"type": "text", "text": f"old_string matches {current.count(old_string)} places in {rel} — include more surrounding context to make it unique."}],
                 "is_error": True,
             }
-        backup = resolved.with_suffix(resolved.suffix + f".bak-{datetime.now().strftime('%Y%m%d-%H%M%S')}")
+        backup = _make_backup_path(resolved)
+        if backup is None:
+            _audit_logger.warning(
+                "APPLY_FAILED target=%s reason=backup_collision",
+                f"agent_builder/{rel}",
+            )
+            return {
+                "content": [{"type": "text", "text": (
+                    f"backup path for {rel} already exists — refusing to clobber. "
+                    "Wait a second and retry."
+                )}],
+                "is_error": True,
+            }
         backup.write_text(current, encoding="utf-8")
         resolved.write_text(current.replace(old_string, new_string, 1), encoding="utf-8")
         change_summary = f"replaced {len(old_string)} chars with {len(new_string)} (backup: {backup.name})"

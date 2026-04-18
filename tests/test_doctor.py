@@ -126,3 +126,28 @@ def test_doctor_fails_when_builder_identity_missing(tmp_path: Path):
     fails = [c for c in checks if c["status"] == "FAIL"]
     assert any("SOUL.md" in c["name"] for c in fails)
     assert exit_code == 1
+
+
+def test_doctor_placeholders_match_scaffold_required():
+    """Doctor's placeholder list must be the same object scaffold fills in.
+
+    The whole point of the doctor template check is to catch drift. If this
+    ever split into two independent lists again, a placeholder scaffold
+    expects could go missing in the template without doctor flagging it.
+    """
+    from agent_builder.tools.scaffold import REQUIRED_PLACEHOLDERS
+
+    assert EXPECTED_TEMPLATE_PLACEHOLDERS is REQUIRED_PLACEHOLDERS
+
+
+def test_doctor_fails_on_missing_builder_version_placeholder(tmp_path: Path):
+    """Regression: pre-fix, doctor missed {{builder_version}} drift entirely."""
+    placeholders_missing_version = tuple(
+        p for p in EXPECTED_TEMPLATE_PLACEHOLDERS if p != "{{builder_version}}"
+    )
+    registry = _seed_builder(tmp_path, template_placeholders=placeholders_missing_version)
+
+    checks, exit_code = run_health_check(tmp_path, registry_file=str(registry))
+    fails = [c for c in checks if c["status"] == "FAIL"]
+    assert any("{{builder_version}}" in c["detail"] for c in fails)
+    assert exit_code == 1

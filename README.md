@@ -74,18 +74,21 @@ The builder's own `AGENT.md` enforces this sequence:
 
 A removal flow (`remove_agent`) is also supported, with explicit confirmation required before deleting.
 
-### The 6 builder tools (MCP server)
+### The builder tools (MCP server)
 
-`agent_builder/tools/__init__.py` assembles one in-process SDK MCP server (`builder_tools_server`) from six `@tool`-decorated async functions:
+`agent_builder/tools/__init__.py` assembles one in-process SDK MCP server (`builder_tools_server`) from nine `@tool`-decorated async functions:
 
-- `scaffold_agent` — validates `agent_name`, creates `output/<name>/` from `templates/agent_main.py.tmpl`, writes `.env.example` and `.gitignore`. Accepts `tools_list`, `allowed_tools_list`, `permission_mode` so the generated `agent.py` is valid Python with no unfilled placeholders.
+- `scaffold_agent` — validates `agent_name`, creates `output/<name>/` from `templates/agent_main.py.tmpl`, writes `.env.example` and `.gitignore`. Accepts `tools_list`, `allowed_tools_list`, `permission_mode`, `max_turns`, `max_budget_usd`, `cli_mode` so the generated `agent.py` is valid Python with no unfilled placeholders.
 - `write_identity` — writes `AGENT.md` / `SOUL.md` / `MEMORY.md` / `USER.md` into the agent dir.
-- `write_tools` — writes `tools.py`, prepending a fixed `TOOLS_HEADER` (imports + `TEST_MODE = False`); the caller must NOT include those.
-- `test_agent` — flips `TEST_MODE = True` in the agent's `tools.py`, dynamically imports it, runs each prompt through `query()`, and always restores `TEST_MODE = False` in a `finally` block. Pass/fail asserts on `subtype=success`, no permission denials, no errors, at least one custom tool call, and all `expected_tools` invoked.
-- `registry` — `add` / `remove` / `list` / `describe` against `agent_builder/registry/agents.json`.
+- `write_tools` — writes `tools.py`, prepending a fixed `TOOLS_HEADER` (imports + `TEST_MODE = False`); the caller must NOT include those. Accepts empty `tools_code` to emit a no-op stub for agents with no custom tools.
+- `test_agent` — flips `TEST_MODE = True` in the agent's `tools.py`, dynamically imports it, runs each prompt through `query()`, and always restores `TEST_MODE = False` in a `finally` block. Pass/fail asserts on `subtype=success`, no permission denials, no errors, at least one custom tool call (relaxed for no-tool agents), and all `expected_tools` invoked.
+- `registry` — `add` / `remove` / `list` / `describe` against `agent_builder/registry/agents.json`. `add` validates the build is complete before sealing it.
 - `remove_agent` — same name validation as `scaffold_agent`, then `shutil.rmtree`s `output/<name>/` and drops the registry entry in one call.
+- `edit_agent` — update an existing agent's identity files or `tools.py` in place. Writes a `.bak-<timestamp>` for every overwritten file. Aborts on sub-second backup collision.
+- `propose_self_change` — builder self-heal. Edit the builder's own identity / tools / template / utils after a hard stdin confirmation. Whitelisted scope; `self_heal.py` itself is denied.
+- `rollback` — list / restore `.bak-<timestamp>` backups made by `edit_agent` or `propose_self_change`. Restore writes a fresh pre-restore backup so it is itself reversible.
 
-The builder also has `Read`, `Write`, `Edit`, `Glob`, `Grep`, and `Bash` available, with `permission_mode="acceptEdits"`.
+The builder also has `Read`, `Write`, `Edit`, `Glob`, `Grep`, `Bash`, `WebFetch`, `WebSearch` available, with `permission_mode="acceptEdits"`.
 
 ### The `TEST_MODE` contract for generated tools
 
@@ -139,7 +142,7 @@ The exact prompts the builder issues vary per agent; the phases above are the co
 Run the suite with:
 
 ```bash
-pytest                                 # all 42 tests as of v0.2.0
+pytest                                 # full suite
 pytest tests/test_scaffold.py          # one file
 pytest -k "scaffold"                   # by keyword
 ```
@@ -171,7 +174,11 @@ python output/<name>/agent.py
 python output/<name>/agent.py --verbose
 ```
 
-Each generated `agent.py` rebuilds its `CLAUDE.md` from the four identity files at startup, registers a `PreToolUse` `safety_hook` on `Bash`, `Write`, and `Edit` (blocks destructive bash patterns like `rm -rf /`, `DROP TABLE`, `DELETE FROM`, `> /dev/sda`, fork bombs; and refuses writes to sensitive paths like `.env`, `.git/`, `pyproject.toml`, `package.json`, `.ssh/`, `id_rsa`, `id_ed25519`, `credentials`). It runs an interactive REPL with `max_turns`/`max_budget_usd` chosen at scaffold time (defaults 25 / $1.00). Both a per-agent log at `output/<name>/<name>.log` and a per-test-run log at `output/<name>/test-run.log` are maintained automatically.
+Each generated `agent.py` rebuilds its `CLAUDE.md` from the four identity files at startup, registers a `PreToolUse` `safety_hook` on `Bash`, `Write`, and `Edit` (blocks destructive bash patterns and refuses writes to sensitive paths — see the [Safety note](#safety-note) below). It runs an interactive REPL with `max_turns`/`max_budget_usd` chosen at scaffold time (defaults 25 / $1.00). Both a per-agent log at `output/<name>/<name>.log` and a per-test-run log at `output/<name>/test-run.log` are maintained automatically.
+
+### Safety note
+
+The builder and every generated agent run with `permission_mode="acceptEdits"` — the LLM can edit files in its working directory without prompting. The `safety_hook` blocks common destructive patterns (`rm -rf /`, `DROP TABLE`, writes to `.env` / `.git/` / `.ssh/`, etc.) but **it is not a sandbox** — substring matching is bypassable by whitespace, env-var indirection, or paths not on the marker list. Run agents from a dedicated working directory you can afford to lose, not your home directory or a repo with uncommitted work.
 
 A `Spinner` (inlined into the template, not imported from `agent_builder`) shows `| / - \` frames on stderr with an elapsed-seconds counter; its label flips to `running <tool>` while a tool executes and back to `thinking` between turns. `format_tool_call` renders one-line previews per tool call (picks the most informative field: `command`, `file_path`, `pattern`, `url`, `action`, ...; truncates to 80 chars; strips the `mcp__<server>__` prefix).
 

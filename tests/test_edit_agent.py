@@ -182,3 +182,33 @@ async def test_edit_agent_tolerates_missing_registry_file(
 
     assert "is_error" not in result
     assert not missing.exists()  # we didn't create it just to bump
+
+
+@pytest.mark.asyncio
+async def test_edit_agent_aborts_on_backup_collision(output_base: Path, monkeypatch: pytest.MonkeyPatch):
+    """Sub-second repeat edit must not silently clobber an existing .bak-<stamp>."""
+    from agent_builder.tools import edit_agent as edit_mod
+
+    agent_dir = _seed_agent(output_base, "target")
+    # Force _backup to use a deterministic stamp so we can pre-plant a collision.
+    class _FrozenDatetime:
+        @staticmethod
+        def now():
+            import datetime as _dt
+            return _dt.datetime(2026, 4, 19, 12, 0, 0)
+    monkeypatch.setattr(edit_mod, "datetime", _FrozenDatetime)
+
+    # Pre-plant the backup path that _backup will try to write.
+    collision = agent_dir / "AGENT.md.bak-20260419-120000"
+    collision.write_text("planted", encoding="utf-8")
+
+    result = await edit_agent(
+        {"agent_name": "target", "agent_md": "# Agent v2"},
+        output_base=str(output_base),
+    )
+
+    assert result.get("is_error") is True
+    assert "backup path already exists" in result["content"][0]["text"]
+    # Original preserved — no silent clobber of AGENT.md, no overwrite of planted backup.
+    assert (agent_dir / "AGENT.md").read_text(encoding="utf-8") == "# Agent v1"
+    assert collision.read_text(encoding="utf-8") == "planted"

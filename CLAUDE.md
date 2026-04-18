@@ -32,7 +32,7 @@ python output/<agent-name>/agent.py
 python output/<agent-name>/agent.py -p "summarise ./README.md"   # if scaffolded cli_mode=True
 
 # Tests
-pytest                                       # all 180+
+pytest                                       # full suite
 pytest tests/test_scaffold.py                # one file
 pytest -k "scaffold"                         # by keyword
 ```
@@ -64,8 +64,8 @@ Every agent (the builder itself and every generated agent) is defined by four ma
 - `test_agent` — flips `TEST_MODE = True` in the agent's `tools.py`, imports it dynamically via `importlib.util`, runs each prompt through `query()` with `max_turns=5`, then always restores `TEST_MODE = False` in a `finally` block
 - `registry` — `add` (upserts by name), `remove`, `list`, `describe` against `agent_builder/registry/agents.json`
 - `remove_agent` — safely deletes `output/<name>/` via `shutil.rmtree` and drops the registry entry in one call. Same validation as `scaffold_agent`; refuses anything resolving outside `output_base`.
-- `edit_agent` — update an existing agent's identity files or `tools.py` in place. Supplied fields replace; omitted fields are left alone. Every overwritten file gets a `.bak-<timestamp>`. `tools_code` gets the canonical `TOOLS_HEADER` prepended same as `write_tools`. Does NOT touch `agent.py`, `.env.example`, or `.gitignore` — those are scaffold-time artifacts.
-- `propose_self_change` — **self-heal**. The builder can edit its own identity/tools/template/utils when it observes a workflow failure, but only after a hard stdin confirmation. Scope is whitelisted (`identity/`, `tools/`, `templates/`, `utils.py`, `builder.py`); `registry/agents.json`, `output/`, and anything outside `agent_builder/` are rejected. Writes a `.bak-<timestamp>` backup on every apply and appends to `agent_builder/self-heal.log`. Changes take effect on the next builder session — the current in-process modules are not reloaded.
+- `edit_agent` — update an existing agent's identity files or `tools.py` in place. Supplied fields replace; omitted fields are left alone. Every overwritten file gets a `.bak-<timestamp>`; sub-second collision aborts the edit rather than clobbering the existing backup. `tools_code` gets the canonical `TOOLS_HEADER` prepended same as `write_tools`. Does NOT touch `agent.py`, `.env.example`, or `.gitignore` — those are scaffold-time artifacts.
+- `propose_self_change` — **self-heal**. The builder can edit its own identity/tools/template/utils when it observes a workflow failure, but only after a hard stdin confirmation. Scope is whitelisted (`identity/`, `tools/`, `templates/`, `utils.py`, `builder.py`); `registry/agents.json`, `tools/self_heal.py` (so the confirmation gate can't be self-removed), `output/`, and anything outside `agent_builder/` are rejected. Writes a `.bak-<timestamp>` backup on every apply (aborts on sub-second collision rather than clobbering) and appends to `agent_builder/self-heal.log`. Changes take effect on the next builder session — the current in-process modules are not reloaded.
 - `rollback` — `list` and `restore` actions over the `.bak-<timestamp>` files left by `edit_agent` and `propose_self_change`. Restore writes a fresh pre-restore backup so it's itself reversible. Refuses cross-file restores (an `AGENT.md.bak-...` cannot be restored over `tools.py`) and standard path-traversal attempts.
 
 Adding a new builder tool: create `agent_builder/tools/<name>.py`, import and register in `tools/__init__.py`, add to `allowed_tools` in `builder.py` as `"mcp__builder_tools__<name>"`.

@@ -150,7 +150,7 @@ def format_tool_call(name: str, tool_input: dict[str, Any]) -> str:
 
     keys = previews.get(short_name)
     if not keys and name.startswith("mcp__"):
-        keys = ("action", "agent_name", "url", "prompt")
+        keys = ("action", "agent_name", "url", "prompt", "test_prompts")
 
     if keys:
         for k in keys:
@@ -205,7 +205,14 @@ def build_claude_md(source_dir: str, output_dir: str, verbose: bool = False) -> 
 
     combined = CLAUDE_MD_HEADER + "\n\n---\n\n".join(sections)
     output_path = output / "CLAUDE.md"
-    output_path.write_text(combined, encoding="utf-8")
+    # Skip write if content is byte-identical — keeps mtime stable so file
+    # watchers and IDEs don't churn on every launch.
+    try:
+        existing = output_path.read_text(encoding="utf-8")
+    except (OSError, FileNotFoundError):
+        existing = None
+    if existing != combined:
+        output_path.write_text(combined, encoding="utf-8")
 
     if verbose:
         print(f"[build_claude_md] Found: {', '.join(found_files)}")

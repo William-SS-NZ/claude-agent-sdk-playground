@@ -349,13 +349,30 @@ async def _batch_run(
     verbose: bool,
     logger: logging.Logger | None = None,
 ) -> None:
+    failures: list[tuple[int, str, str]] = []
     for i, prompt in enumerate(prompts, 1):
         if logger:
             logger.info("batch prompt %d/%d: %s", i, len(prompts), prompt)
         print(f"\n  ══════════════════════════════════════════════════════════════")
         print(f"   Prompt {i}/{len(prompts)}: {prompt}")
         print(f"  ══════════════════════════════════════════════════════════════")
-        await _run_one_query(client, prompt, verbose, logger=logger)
+        try:
+            await _run_one_query(client, prompt, verbose, logger=logger)
+        except KeyboardInterrupt:
+            if logger:
+                logger.warning("batch interrupted at prompt %d/%d", i, len(prompts))
+            print(f"\n  [Batch interrupted at prompt {i}/{len(prompts)}.]\n")
+            raise
+        except Exception as e:
+            if logger:
+                logger.error("batch prompt %d failed: %s\n%s", i, e, traceback.format_exc())
+            failures.append((i, prompt, str(e)))
+            print(f"\n  [Prompt {i} failed: {e} — continuing with next prompt.]\n")
+    if failures:
+        print("\n  Batch summary — failures:")
+        for idx, prompt, err in failures:
+            snippet = prompt if len(prompt) <= 60 else prompt[:57] + "..."
+            print(f"    {idx}. {snippet} — {err}")
 
 
 def _load_spec(spec_path: str) -> list[str]:
@@ -454,11 +471,17 @@ def _cli_doctor() -> int:
     """Run the read-only health audit. No SDK, no cost."""
     checks, exit_code = run_health_check(REPO_ROOT, registry_file=_REGISTRY_PATH)
     print(_format_doctor_checks(checks))
-    if exit_code == 0:
+    fail_count = sum(1 for c in checks if c["status"] == "FAIL")
+    warn_count = sum(1 for c in checks if c["status"] == "WARN")
+    if exit_code == 0 and warn_count == 0:
         print("\nHealth check: OK")
     else:
-        fail_count = sum(1 for c in checks if c["status"] == "FAIL")
-        print(f"\nHealth check: {fail_count} FAIL")
+        parts = []
+        if fail_count:
+            parts.append(f"{fail_count} FAIL")
+        if warn_count:
+            parts.append(f"{warn_count} WARN")
+        print(f"\nHealth check: {', '.join(parts)}")
     return exit_code
 
 

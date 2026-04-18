@@ -56,6 +56,36 @@ async def test_reports_char_count(tmp_path: Path):
     assert "350" in text
 
 
+def test_mcp_schema_exposes_user_md():
+    """Regression: schema used to omit user_md, making the USER.md code path
+    unreachable via the SDK even though the function accepted it."""
+    from agent_builder.tools.write_identity import write_identity_tool
+
+    # MCP tool wrapper may store schema under different attr names depending
+    # on SDK version; dig for any dict-shaped property list.
+    attrs_to_try = ("_schema", "schema", "input_schema", "inputSchema", "__claude_tool_schema__")
+    schema = None
+    for name in attrs_to_try:
+        val = getattr(write_identity_tool, name, None)
+        if isinstance(val, dict):
+            schema = val
+            break
+    if schema is None:
+        # Fall back to scanning the whole object's __dict__ for any dict that
+        # looks like a schema (has a 'properties' or is a flat kwargs dict).
+        for v in vars(write_identity_tool).values():
+            if isinstance(v, dict) and ("user_md" in v or "properties" in v):
+                schema = v
+                break
+    assert schema is not None, "could not locate schema on write_identity_tool"
+
+    # Flattened {agent_name: str, ...} form OR JSON-schema {properties: {...}} form.
+    if "properties" in schema:
+        assert "user_md" in schema["properties"], f"user_md missing from schema: {schema}"
+    else:
+        assert "user_md" in schema, f"user_md missing from schema: {schema}"
+
+
 @pytest.mark.asyncio
 async def test_errors_on_missing_directory(tmp_path: Path):
     result = await write_identity({

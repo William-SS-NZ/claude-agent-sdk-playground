@@ -4,6 +4,8 @@ Things an external expert should verify before relying on this repo in productio
 
 Covers v0.7.0 (180 passing tests, 9 builder tools, 9 CLI subcommands).
 
+**2026-04-19 audit update:** items marked **✅ CLOSED** below were resolved in the post-audit fix round — see `audit.md` and `CHANGELOG.md` Unreleased section. Items marked **→ v0.8.0** are sequenced in `docs/next-release-plan.md`.
+
 ---
 
 ## A. Security-sensitive
@@ -85,7 +87,7 @@ These are instructions in markdown, not code. The LLM is told to follow them; no
 - mtime vs ctime on Windows — we use mtime; could a backup restore or a touch reset the clock unexpectedly?
 - The `screenshots/` all-or-nothing logic — is it too conservative (stale dir with one accidentally-touched file never cleaned) or too aggressive (expert might want to preserve any non-empty dir)?
 
-### B3. `edit_agent` / `self_heal` / `rollback` backups
+### B3. `edit_agent` / `self_heal` / `rollback` backups — ✅ CLOSED
 
 Every overwrite writes `<file>.bak-<YYYYMMDD-HHMMSS>`. Sub-second repeat operations can collide (only rollback explicitly aborts on collision; the other two silently overwrite the backup, **losing the original**).
 
@@ -93,7 +95,7 @@ Every overwrite writes `<file>.bak-<YYYYMMDD-HHMMSS>`. Sub-second repeat operati
 - Whether edit_agent and propose_self_change should also abort on `.bak-<stamp>` collision.
 - Whether a monotonic counter suffix would be safer (`.bak-20260419-153045-0001.md`).
 
-### B4. `test_agent` mutates `tools.py` in place
+### B4. `test_agent` mutates `tools.py` in place — → v0.8.0
 
 To switch on TEST_MODE, `test_agent` does a string replace `TEST_MODE = False` → `TEST_MODE = True` in the target's `tools.py`, runs, then restores in `finally`. Two failure modes:
 
@@ -145,7 +147,7 @@ Fail-soft: any parse error or missing call returns 0 ("no tools"). That relaxes 
 **Ask the expert to verify:**
 - Whether fail-soft is the right direction here, or we should fail-loud (error out test_agent if we can't determine tool count).
 
-### D2. Template placeholder drift
+### D2. Template placeholder drift — ✅ CLOSED (doctor + scaffold now share one `REQUIRED_PLACEHOLDERS` tuple)
 
 Scaffold has two guards:
 
@@ -195,9 +197,9 @@ Written at v0.7.0. If the code changes, this file will not. Flag stale items on 
 
 1. **Self-heal is the scariest feature.** The builder can modify its own code. The only gate is a stdin prompt. Is this the right trade-off, or should self-heal write a PR / diff file for human review instead of applying inline?
 2. **`acceptEdits` permission mode on the builder** means the LLM can Edit/Write files without asking, across the whole project. The safety_hook for generated agents doesn't apply to the builder's own runs — the builder has broader powers than anything it builds. Intentional, but worth flagging.
-3. **`WebFetch` / `WebSearch` are on by default** (v0.5.3). User prompts containing URLs could trigger unexpected fetches. No URL allow-list.
-4. **TEST_MODE file mutation** is a smell. A proper fix would pass TEST_MODE via env var or constructor arg. Current approach works because of defensive finally, but could be cleaner.
-5. **`propose_self_change` can't be used to disable itself** — the tool's own source is under `agent_builder/tools/`, which is in the whitelist. Worth tightening the scope to forbid editing `self_heal.py` specifically.
+3. **`WebFetch` / `WebSearch` are on by default** (v0.5.3). User prompts containing URLs could trigger unexpected fetches. No URL allow-list. — → v0.8.0 (`ENABLE_WEB_TOOLS` env-var gate).
+4. **TEST_MODE file mutation** is a smell. A proper fix would pass TEST_MODE via env var or constructor arg. Current approach works because of defensive finally, but could be cleaner. — → v0.8.0 (env-var rewrite planned in `docs/next-release-plan.md#1.1`).
+5. **`propose_self_change` can't be used to disable itself** — the tool's own source is under `agent_builder/tools/`, which is in the whitelist. Worth tightening the scope to forbid editing `self_heal.py` specifically. — ✅ CLOSED (added to `DENY_FILES`, regression test in place).
 
 ---
 

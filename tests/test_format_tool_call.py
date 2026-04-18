@@ -43,3 +43,20 @@ def test_falls_back_to_first_scalar_for_unknown_tool():
 def test_empty_input_returns_bare_name():
     out = format_tool_call("Bash", {})
     assert out.strip() == "[Tool: Bash]"
+
+
+def test_test_prompts_rendered_as_count():
+    """test_agent calls carry a test_prompts list — show the count, not the list."""
+    out = format_tool_call(
+        "mcp__builder_tools__test_agent",
+        {"agent_name": "ez-read", "test_prompts": [{"prompt": "a"}, {"prompt": "b"}, "c"]},
+    )
+    # agent_name ranks first in the mcp fallback, so that's what's previewed.
+    assert "agent_name=ez-read" in out
+
+    # Without agent_name, test_prompts should render as N prompts.
+    out2 = format_tool_call(
+        "mcp__builder_tools__test_agent",
+        {"test_prompts": [{"prompt": "a"}, {"prompt": "b"}, "c"]},
+    )
+    assert "3 prompts" in out2

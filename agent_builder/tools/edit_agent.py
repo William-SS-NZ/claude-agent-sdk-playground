@@ -60,12 +60,26 @@ def _bump_registry_updated_at(agent_name: str, registry_file: str) -> None:
             return
 
 
+class BackupCollisionError(RuntimeError):
+    """Raised when a `.bak-<stamp>` sibling already exists (sub-second repeat).
+
+    Aborts the edit rather than silently clobbering the backup and losing the
+    original. Matches rollback's collision semantics.
+    """
+
+
 def _backup(target: Path) -> Path | None:
-    """Write target.with_suffix(...bak-<timestamp>) if target exists."""
+    """Write target.with_suffix(...bak-<timestamp>) if target exists.
+
+    Raises BackupCollisionError on sub-second collision (same-stamp sibling
+    already present) — safer than overwriting the existing backup.
+    """
     if not target.exists():
         return None
     stamp = datetime.now().strftime("%Y%m%d-%H%M%S")
     backup = target.with_suffix(target.suffix + f".bak-{stamp}")
+    if backup.exists():
+        raise BackupCollisionError(str(backup))
     backup.write_text(target.read_text(encoding="utf-8"), encoding="utf-8")
     return backup
 
@@ -106,22 +120,32 @@ async def edit_agent(
     applied: list[str] = []
     backups: list[str] = []
 
-    for filename, content in identity_changes:
-        target = agent_dir / filename
-        backup = _backup(target)
-        if backup:
-            backups.append(backup.name)
-        target.write_text(content, encoding="utf-8")
-        applied.append(f"{filename} ({len(content)} chars)")
+    try:
+        for filename, content in identity_changes:
+            target = agent_dir / filename
+            backup = _backup(target)
+            if backup:
+                backups.append(backup.name)
+            target.write_text(content, encoding="utf-8")
+            applied.append(f"{filename} ({len(content)} chars)")
 
-    if tools_code is not None:
-        target = agent_dir / "tools.py"
-        backup = _backup(target)
-        if backup:
-            backups.append(backup.name)
-        full_content = TOOLS_HEADER + "\n" + tools_code
-        target.write_text(full_content, encoding="utf-8")
-        applied.append(f"tools.py ({len(full_content)} chars)")
+        if tools_code is not None:
+            target = agent_dir / "tools.py"
+            backup = _backup(target)
+            if backup:
+                backups.append(backup.name)
+            full_content = TOOLS_HEADER + "\n" + tools_code
+            target.write_text(full_content, encoding="utf-8")
+            applied.append(f"tools.py ({len(full_content)} chars)")
+    except BackupCollisionError as e:
+        return {
+            "content": [{"type": "text", "text": (
+                f"Refusing to edit '{agent_name}' — backup path already exists: {e}. "
+                f"Sub-second repeat edit detected. Wait a second and retry. "
+                f"Partial edits before the collision: {applied or 'none'}."
+            )}],
+            "is_error": True,
+        }
 
     # Successful edit — bump the registry's updated_at so 'last modified'
     # tracks real changes. Silent no-op if this agent isn't registered.

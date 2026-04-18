@@ -77,5 +77,6 @@ write_identity_tool = tool(
         "agent_md": str,
         "soul_md": str,
         "memory_md": str,
+        "user_md": str,
     },
 )(write_identity)

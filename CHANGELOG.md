@@ -3,6 +3,27 @@
 All notable changes to this project are documented here.
 Format loosely follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [Unreleased] — pre-release audit fixes
+
+### Fixed
+- **Doctor template-drift guard was itself drifting.** `doctor.EXPECTED_TEMPLATE_PLACEHOLDERS` checked 9 placeholders; `scaffold_agent` required 11. `{{builder_version}}` and `{{cli_help_epilog}}` could go missing in the template without doctor flagging it — exactly the failure mode doctor is supposed to catch. Fix: scaffold now exports `REQUIRED_PLACEHOLDERS` as the single source of truth; doctor imports it. Regression test asserts the two are the same object.
+- **`write_identity` MCP schema omitted `user_md`.** The function accepted it, `FILE_MAP` wrote it, but the SDK schema didn't advertise it — the `USER.md` code path was unreachable via tool call. Added `user_md: str` to the schema.
+- **`.bak-<timestamp>` sub-second collisions silently clobbered originals.** `edit_agent._backup` and `self_heal` both overwrote existing backups when called twice in the same second, destroying the very file they were meant to preserve. Both now abort on collision, matching `rollback`'s existing semantics. Regression test plants a collision and asserts the edit is refused.
+- **`self_heal` could rewrite `tools/self_heal.py`.** The only safety gate on the self-heal capability is a stdin `input()` prompt in that file; until this fix, self-heal could legally edit away the gate. Added `tools/self_heal.py` to the deny list. Regression test covers the rejection path.
+- **`scaffold._validate_agent_name` used `startswith` for path containment.** Fragile on Windows where `C:\foo` is a prefix of `C:\foo2\x`. Unreachable today (regex blocks it) but now uses `resolved.relative_to(base)` to match every other path validator in the codebase.
+- **`format_tool_call` had dead code for `test_prompts`.** The `test_prompts`-as-count branch lived inside the `for k in keys` loop, but `test_prompts` was never in the fallback key list. Added it; added regression test.
+- **`_batch_run` aborted the whole batch on one failure.** Users running `--spec` with 5 prompts now get at least partial success; per-prompt errors are caught, logged, and summarised at the end. `KeyboardInterrupt` still aborts.
+
+### Changed
+- **`--doctor` CLI output surfaces WARN counts.** Previous behaviour: `Health check: OK` unless something FAILed — WARNs were invisible to a CI operator scanning the last line. Now reports `N FAIL, M WARN`.
+- **Expanded `safety_hook` blocked patterns + sensitive paths** (template): added `rm -rf ~`, `TRUNCATE TABLE`, `mkfs`, `dd if=/dev/zero`, `chmod -R 777 /`, `curl | sh`, `/etc/shadow`, `/etc/passwd`, `~/.aws/credentials`, `~/.kube/config`, `NTUSER.DAT`, Windows `Credentials` dir, macOS Keychains, `.netrc`, `.pgpass`. Added a prominent comment marking the hook as defense-in-depth, not a sandbox. README safety-note section mirrors the warning.
+- **`build_claude_md` skips write when content is byte-identical.** Stops the `mtime`-churn that retriggered file watchers / IDE tooling on every launch. Applied to both `agent_builder/utils.py` and the generated-agent template copy.
+- **Docstrings / identity docs aligned with SDK.** `scaffold_agent` docstring now lists `dontAsk` and `auto` alongside the other `permission_mode` values. `AGENT.md` self-heal section now names `tools/self_heal.py` as forbidden.
+
+### Added
+- **`audit.md`** — pre-release audit log.
+- Regression tests for every fix above (6 new tests; full suite now at 186 passing).
+
 ## [0.7.0] - 2026-04-19
 
 ### Added

@@ -81,7 +81,12 @@ def build_claude_md(verbose: bool = False) -> None:
 
     combined = CLAUDE_MD_HEADER + "\n\n---\n\n".join(sections)
     output_path = AGENT_DIR / "CLAUDE.md"
-    output_path.write_text(combined, encoding="utf-8")
+    try:
+        existing = output_path.read_text(encoding="utf-8")
+    except (OSError, FileNotFoundError):
+        existing = None
+    if existing != combined:
+        output_path.write_text(combined, encoding="utf-8")
 
     if verbose:
         print(f"[build_claude_md] Found: {', '.join(found_files)}")
@@ -213,14 +218,30 @@ def format_tool_call(name, tool_input):
 
 
 # --- Safety hook ---
+#
+# NOT A SANDBOX. Substring-matching is best-effort defense-in-depth — it can
+# be bypassed by whitespace tricks (`rm  -rf /`), env-var indirection
+# (`X=rm; $X -rf /`), piped decoders (`base64 -d | bash`), or paths not in
+# the marker list. Run generated agents with `acceptEdits` only in a
+# dedicated working directory you can afford to lose.
 
 _BLOCKED_BASH_PATTERNS = (
     "rm -rf /",
     "rm -rf /*",
+    "rm -rf ~",
     "DROP TABLE",
     "DELETE FROM",
+    "TRUNCATE TABLE",
     "> /dev/sda",
+    "mkfs ",
+    "dd if=/dev/zero",
     ":(){ :|:& };:",  # fork bomb
+    "chmod -R 777 /",
+    "chown -R ",
+    "curl | sh",
+    "curl | bash",
+    "wget | sh",
+    "wget | bash",
 )
 
 _SENSITIVE_PATH_MARKERS = (
@@ -233,7 +254,20 @@ _SENSITIVE_PATH_MARKERS = (
     "\\.ssh\\",
     "id_rsa",
     "id_ed25519",
+    "id_ecdsa",
     "credentials",
+    "/etc/shadow",
+    "/etc/passwd",
+    "/etc/sudoers",
+    ".aws/credentials",
+    ".aws/config",
+    ".kube/config",
+    ".docker/config",
+    ".netrc",
+    ".pgpass",
+    "NTUSER.DAT",
+    "\\Microsoft\\Credentials",
+    "/Keychains/",
 )
 
 

@@ -18,22 +18,7 @@ from pathlib import Path
 from typing import Any
 
 from agent_builder.tools.registry import DEFAULT_REGISTRY, REQUIRED_AGENT_FILES
-
-
-# Placeholders the scaffold template MUST contain — if one of these goes
-# missing in the template, the scaffold tool silently stops filling it in
-# and generated agents break. This list is the single source of truth.
-EXPECTED_TEMPLATE_PLACEHOLDERS = (
-    "{{agent_name}}",
-    "{{agent_description}}",
-    "{{tools_list}}",
-    "{{allowed_tools_list}}",
-    "{{permission_mode}}",
-    "{{max_turns}}",
-    "{{max_budget_usd}}",
-    "{{cli_args_block}}",
-    "{{cli_dispatch_block}}",
-)
+from agent_builder.tools.scaffold import REQUIRED_PLACEHOLDERS as EXPECTED_TEMPLATE_PLACEHOLDERS
 
 BUILDER_IDENTITY_FILES = ("AGENT.md", "SOUL.md", "MEMORY.md")
 
