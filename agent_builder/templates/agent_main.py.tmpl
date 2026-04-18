@@ -62,6 +62,8 @@ def build_claude_md(verbose: bool = False) -> None:
         elif filename == "USER.md":
             if verbose:
                 print(f"[build_claude_md] {filename} not found, skipping")
+        else:
+            raise FileNotFoundError(f"Required identity file not found: {filepath}")
 
     combined = CLAUDE_MD_HEADER + "\n\n---\n\n".join(sections)
     output_path = AGENT_DIR / "CLAUDE.md"
@@ -167,12 +169,42 @@ def format_tool_call(name, tool_input):
 
 # --- Safety hook ---
 
+_BLOCKED_BASH_PATTERNS = (
+    "rm -rf /",
+    "rm -rf /*",
+    "DROP TABLE",
+    "DELETE FROM",
+    "> /dev/sda",
+    ":(){ :|:& };:",  # fork bomb
+)
+
+_SENSITIVE_PATH_MARKERS = (
+    ".env",
+    ".git/",
+    "\\.git\\",
+    "pyproject.toml",
+    "package.json",
+    ".ssh/",
+    "\\.ssh\\",
+    "id_rsa",
+    "id_ed25519",
+    "credentials",
+)
+
+
+def _is_sensitive_path(p: str) -> bool:
+    lower = p.replace("\\", "/").lower()
+    return any(marker.replace("\\", "/").lower() in lower for marker in _SENSITIVE_PATH_MARKERS)
+
+
 async def safety_hook(input_data, tool_use_id, context):
-    """Block common destructive bash patterns."""
-    if input_data["tool_name"] == "Bash":
-        command = input_data["tool_input"].get("command", "")
-        blocked = ["rm -rf /", "DROP TABLE", "DELETE FROM", "> /dev/sda"]
-        for pattern in blocked:
+    """Block destructive bash patterns and writes to sensitive paths."""
+    tool_name = input_data.get("tool_name", "")
+    tool_input = input_data.get("tool_input", {}) or {}
+
+    if tool_name == "Bash":
+        command = tool_input.get("command", "")
+        for pattern in _BLOCKED_BASH_PATTERNS:
             if pattern in command:
                 return {
                     "hookSpecificOutput": {
@@ -181,6 +213,18 @@ async def safety_hook(input_data, tool_use_id, context):
                         "permissionDecisionReason": f"Blocked dangerous pattern: {pattern}",
                     }
                 }
+        return {}
+
+    if tool_name in ("Write", "Edit"):
+        path = tool_input.get("file_path", "")
+        if path and _is_sensitive_path(path):
+            return {
+                "hookSpecificOutput": {
+                    "hookEventName": "PreToolUse",
+                    "permissionDecision": "deny",
+                    "permissionDecisionReason": f"Refusing to modify sensitive path: {path}",
+                }
+            }
     return {}
 
 
@@ -207,7 +251,11 @@ async def main():
         allowed_tools={{allowed_tools_list}},
         permission_mode="{{permission_mode}}",
         hooks={
-            "PreToolUse": [HookMatcher(matcher="Bash", hooks=[safety_hook])],
+            "PreToolUse": [
+                HookMatcher(matcher="Bash", hooks=[safety_hook]),
+                HookMatcher(matcher="Write", hooks=[safety_hook]),
+                HookMatcher(matcher="Edit", hooks=[safety_hook]),
+            ],
         },
         max_turns={{max_turns}},
         max_budget_usd={{max_budget_usd}},

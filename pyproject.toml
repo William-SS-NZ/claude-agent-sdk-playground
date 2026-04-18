@@ -1,18 +1,21 @@
 [project]
 name = "claude-agent-sdk-playground"
-version = "0.2.0"
+version = "0.3.0"
 description = "Agent Builder — create, test, and manage purpose-built Claude Agent SDK agents through conversation"
 requires-python = ">=3.10"
+license = { text = "PolyForm-Noncommercial-1.0.0" }
+authors = [{ name = "William Clelland" }]
+readme = "README.md"
 dependencies = [
-    "claude-agent-sdk",
-    "anyio",
+    "claude-agent-sdk>=0.1.0",
+    "anyio>=4.0",
 ]
 
 [project.optional-dependencies]
 dev = [
-    "python-dotenv",
-    "pytest",
-    "pytest-asyncio",
+    "python-dotenv>=1.0",
+    "pytest>=7.0",
+    "pytest-asyncio>=0.21",
 ]
 
 [tool.setuptools.packages.find]
