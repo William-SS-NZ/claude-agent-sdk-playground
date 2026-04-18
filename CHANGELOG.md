@@ -3,6 +3,20 @@
 All notable changes to this project are documented here.
 Format loosely follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [0.5.2] - 2026-04-18
+
+### Changed
+- **`_count_custom_tools_from_source` replaces `_count_custom_tools`** in `test_agent.py`. The old version introspected an SDK MCP server object via guessed attributes (`tools`, `_tools`, `registered_tools`, `instance.*`) — fragile, untested, and would silently regress to "every agent classifies as no-tools" if the SDK renamed an internal field. The new version `ast.parse`s the agent's `tools.py`, walks the tree for the `create_sdk_mcp_server(...)` call, and returns `len(...)` of the `tools=[...]` keyword. Zero SDK coupling, rename-proof, fail-soft on parse errors.
+- **Narrowed `test_agent` no-tools `allowed_tools`** from `[Read, Glob, Grep, Edit, Write, Bash]` to `[Read, Glob, Grep]` — read-only envelope for smoke tests of agents that don't define custom tools, so a summariser test can't accidentally run shell commands.
+- **Generated agents now use `RotatingFileHandler`** for their per-agent log (`output/<name>/<name>.log`) instead of plain `FileHandler`. 5 MB per file, 3 backups (`<name>.log.1` / `.log.2` / `.log.3`) → 20 MB cap per agent. Startup banner mentions the rotation policy.
+
+### Added
+- Tests for `_count_custom_tools_from_source` covering empty stub, single tool, multiple tools, malformed source, missing `create_sdk_mcp_server` call, nonexistent file, and non-literal `tools=` argument (7 cases).
+- Tests for the template's log-rotation wiring including a functional smoke test that forces a rollover with a 1 KB cap and asserts the `.log.1` backup appears (6 cases).
+
+### Verified (no code change)
+- `output/ez-read/` boots cleanly post-fix: `tools.py` imports, `agent.py` parses, `--help` works without an API call. Confirms the v0.5.1 ModuleNotFoundError fix landed correctly on the previously broken agent.
+
 ## [0.5.1] - 2026-04-18
 
 ### Fixed

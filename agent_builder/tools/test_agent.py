@@ -10,6 +10,7 @@ A detailed, timestamped log is written to output/<agent_name>/test-run.log
 so failures can be diagnosed after the fact.
 """
 
+import ast
 import importlib.util
 import logging
 import sys
@@ -52,28 +53,41 @@ def _load_tools_server(tools_py_path: Path) -> Any:
     return module.tools_server
 
 
-def _count_custom_tools(tools_server: Any) -> int:
-    """Best-effort count of how many tools an SDK MCP server exposes.
+def _count_custom_tools_from_source(tools_py_path: Path) -> int:
+    """Count custom tools by parsing tools.py source (no SDK coupling).
 
-    The SDK's create_sdk_mcp_server returns a server whose internals vary
-    across versions; we try a few common attributes and fall back to 0.
+    Walks the AST looking for a ``create_sdk_mcp_server(...)`` call and
+    returns the number of elements in its ``tools=[...]`` keyword argument.
+    Failing to find or parse the call returns 0 so the caller falls back
+    to the relaxed "no custom tools" path — same fail-soft behaviour as
+    the previous attribute-probing implementation.
     """
-    for attr in ("tools", "_tools", "registered_tools"):
-        value = getattr(tools_server, attr, None)
-        if value is not None:
-            try:
-                return len(value)
-            except TypeError:
-                continue
-    instance = getattr(tools_server, "instance", None)
-    if instance is not None:
-        for attr in ("tools", "_tools"):
-            value = getattr(instance, attr, None)
-            if value is not None:
-                try:
-                    return len(value)
-                except TypeError:
-                    continue
+    logger = logging.getLogger(__name__)
+    try:
+        source = tools_py_path.read_text(encoding="utf-8")
+        tree = ast.parse(source)
+    except (OSError, SyntaxError) as e:
+        logger.warning("could not parse %s for tool count: %s", tools_py_path, e)
+        return 0
+
+    for node in ast.walk(tree):
+        if not isinstance(node, ast.Call):
+            continue
+        func = node.func
+        func_name = None
+        if isinstance(func, ast.Name):
+            func_name = func.id
+        elif isinstance(func, ast.Attribute):
+            func_name = func.attr
+        if func_name != "create_sdk_mcp_server":
+            continue
+        for kw in node.keywords:
+            if kw.arg == "tools" and isinstance(kw.value, (ast.List, ast.Tuple)):
+                return len(kw.value.elts)
+        # call found but no literal tools=[...] — treat as unknown/zero
+        return 0
+
+    logger.warning("no create_sdk_mcp_server(...) call found in %s", tools_py_path)
     return 0
 
 
@@ -252,13 +266,15 @@ async def test_agent(args: dict[str, Any], output_base: str = "output") -> dict[
         # only built-in Read/Glob/Grep). For these, drop the
         # "must call at least one custom tool" pass criterion and broaden
         # allowed_tools so the agent can actually use the built-ins.
-        custom_tool_count = _count_custom_tools(tools_server)
+        custom_tool_count = _count_custom_tools_from_source(tools_py_path)
         has_custom_tools = custom_tool_count > 0
         if has_custom_tools:
             allowed = ["mcp__agent_tools__*"]
         else:
-            allowed = ["Read", "Glob", "Grep", "Edit", "Write", "Bash"]
-            logger.info("agent has no custom tools — relaxed pass criterion + built-in allowed_tools")
+            # Narrow to read-only built-ins: a smoke test shouldn't hand a
+            # no-tools agent Bash/Edit/Write just to prove it can talk.
+            allowed = ["Read", "Glob", "Grep"]
+            logger.info("agent has no custom tools — relaxed pass criterion + read-only built-ins")
 
         options = ClaudeAgentOptions(
             setting_sources=["project"],
