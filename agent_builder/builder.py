@@ -51,6 +51,7 @@ async def main() -> None:
             "mcp__builder_tools__registry",
             "mcp__builder_tools__remove_agent",
             "mcp__builder_tools__propose_self_change",
+            "mcp__builder_tools__edit_agent",
             "Read", "Write", "Edit", "Glob", "Grep", "Bash",
         ],
         permission_mode="acceptEdits",

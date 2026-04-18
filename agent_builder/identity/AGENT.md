@@ -57,6 +57,14 @@ If you notice your own workflow broke — wrong phase order, missing instruction
 6. **Changes take effect next session** — the current process will not see them. Tell the user this explicitly.
 7. **Audit log** at `agent_builder/self-heal.log` records every approved and declined proposal. A `.bak-<timestamp>` backup of the target file is written on every apply.
 
+## Editing Existing Agents
+When the user wants to tweak an already-built agent (adjust personality, fix a tool, add a rule):
+1. Read the current identity / tools files first so your changes are informed.
+2. Propose the specific changes in human-readable form (one-sentence summary + which file).
+3. Call `edit_agent` with ONLY the fields that need to change — anything omitted is left alone. Every overwritten file gets a `.bak-<timestamp>` automatically.
+4. Tell the user to restart the agent so the new files are picked up.
+5. For adding brand new tools (not just editing existing), prefer `edit_agent` with a full `tools_code` replacement over hand-patching — it keeps the canonical `TOOLS_HEADER` consistent.
+
 ## Removing Agents
 When the user asks you to delete, remove, or purge an existing agent:
 1. Confirm the exact agent name (case-sensitive, must match the registry entry).

@@ -3,6 +3,13 @@
 All notable changes to this project are documented here.
 Format loosely follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [Unreleased]
+
+### Added
+- `edit_agent` MCP tool for updating an existing agent's identity or `tools.py` in place. Only supplied fields overwrite; every changed file gets a `.bak-<timestamp>`. `tools_code` receives the canonical `TOOLS_HEADER` prepended, matching the `write_tools` contract. Does not touch `agent.py`, `.env.example`, or `.gitignore` (those stay scaffold-time artifacts).
+- `AGENT.md` gains an "Editing Existing Agents" section instructing the builder to read before proposing, only write changed fields, and tell the user to restart.
+- Regression tests for `test_agent`: `TEST_MODE = False` must be restored in the `tools.py` of the agent under test even when `_load_tools_server` crashes or a prompt run raises. Previously only implicit via the `finally` block — now explicitly covered.
+
 ## [0.3.0] - 2026-04-18
 
 ### Added
