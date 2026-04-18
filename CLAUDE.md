@@ -12,21 +12,34 @@ Agent Builder — meta-agent that builds Claude Agent SDK agents through convers
 # Install (editable + dev extras)
 pip install -e ".[dev]"
 
-# Run the Agent Builder CLI
+# Interactive chat loop (menu on launch)
 python -m agent_builder.builder
-python -m agent_builder.builder --verbose   # shows raw SDK messages, tool inputs, token/cost info
+python -m agent_builder.builder -v                # raw SDK messages + cost details
+
+# Non-interactive build
+python -m agent_builder.builder -p "build me a markdown summariser called md-summary"
+python -m agent_builder.builder -s build-spec.json    # {"prompt": "..."} or {"prompts": [...]}
+
+# Direct bookkeeping (no SDK, no cost)
+python -m agent_builder.builder --remove NAME         # also -r
+python -m agent_builder.builder --purge-all           # also -P
+python -m agent_builder.builder --sweep --older-than 7   # clean .bak files / logs / screenshots
+python -m agent_builder.builder --doctor              # read-only health audit
+python -m agent_builder.builder --help                # discover everything
 
 # Run a generated agent
 python output/<agent-name>/agent.py
+python output/<agent-name>/agent.py -p "summarise ./README.md"   # if scaffolded cli_mode=True
 
 # Tests
-pytest                                      # all
-pytest tests/test_scaffold.py               # one file
-pytest tests/test_scaffold.py::test_scaffold_rejects_invalid_name  # one test
-pytest -k "scaffold"                        # by keyword
+pytest                                       # all 180+
+pytest tests/test_scaffold.py                # one file
+pytest -k "scaffold"                         # by keyword
 ```
 
-Requires `ANTHROPIC_API_KEY` in the agent's `.env` (template at `agent_builder/templates/env_example.tmpl`).
+Per-run builder log at `agent_builder/logs/builder-YYYYMMDD-HHMMSS.log`. Per-agent log at `output/<name>/<name>.log` (rotating 5 MB × 3 backups).
+
+Auth: `ANTHROPIC_API_KEY` in `.env` (the generated agent auto-loads via `python-dotenv`), or fall back to the `claude login` subscription if the key is unset.
 
 ## Architecture
 
@@ -52,10 +65,22 @@ Every agent (the builder itself and every generated agent) is defined by four ma
 - `registry` — `add` (upserts by name), `remove`, `list`, `describe` against `agent_builder/registry/agents.json`
 - `remove_agent` — safely deletes `output/<name>/` via `shutil.rmtree` and drops the registry entry in one call. Same validation as `scaffold_agent`; refuses anything resolving outside `output_base`.
 - `edit_agent` — update an existing agent's identity files or `tools.py` in place. Supplied fields replace; omitted fields are left alone. Every overwritten file gets a `.bak-<timestamp>`. `tools_code` gets the canonical `TOOLS_HEADER` prepended same as `write_tools`. Does NOT touch `agent.py`, `.env.example`, or `.gitignore` — those are scaffold-time artifacts.
-- `propose_self_change` — **self-heal**.
-- `rollback` — `list` and `restore` actions over the `.bak-<timestamp>` files left by `edit_agent` and `propose_self_change`. Restore writes a fresh pre-restore backup so it's itself reversible. Refuses cross-file restores (an `AGENT.md.bak-...` cannot be restored over `tools.py`) and standard path-traversal attempts. The builder can edit its own identity/tools/template/utils when it observes a workflow failure, but only after a hard stdin confirmation. Scope is whitelisted (`identity/`, `tools/`, `templates/`, `utils.py`, `builder.py`); `registry/agents.json`, `output/`, and anything outside `agent_builder/` are rejected. Writes a `.bak-<timestamp>` backup on every apply and appends to `agent_builder/self-heal.log`. Changes take effect on the next builder session — the current in-process modules are not reloaded.
+- `propose_self_change` — **self-heal**. The builder can edit its own identity/tools/template/utils when it observes a workflow failure, but only after a hard stdin confirmation. Scope is whitelisted (`identity/`, `tools/`, `templates/`, `utils.py`, `builder.py`); `registry/agents.json`, `output/`, and anything outside `agent_builder/` are rejected. Writes a `.bak-<timestamp>` backup on every apply and appends to `agent_builder/self-heal.log`. Changes take effect on the next builder session — the current in-process modules are not reloaded.
+- `rollback` — `list` and `restore` actions over the `.bak-<timestamp>` files left by `edit_agent` and `propose_self_change`. Restore writes a fresh pre-restore backup so it's itself reversible. Refuses cross-file restores (an `AGENT.md.bak-...` cannot be restored over `tools.py`) and standard path-traversal attempts.
 
 Adding a new builder tool: create `agent_builder/tools/<name>.py`, import and register in `tools/__init__.py`, add to `allowed_tools` in `builder.py` as `"mcp__builder_tools__<name>"`.
+
+### Direct CLI helpers (no SDK, no model cost)
+
+Three commands on `builder.py` short-circuit the SDK entirely — useful for scripts, CI, and post-incident cleanup:
+
+- `--sweep [--older-than DAYS]` — deletes stale `.bak-<timestamp>` files under `agent_builder/` and `output/`, per-run `agent_builder/logs/builder-<timestamp>.log` files, and `screenshots/` at the repo root when every file inside is older than the cutoff. Default cutoff 7 days. Dry-run summary first; needs `--yes` to skip the confirm prompt. Implementation: `agent_builder/cleanup.py`.
+- `--doctor` — read-only health audit: registry parses, every registered agent has its `output/<name>/` with all required files, output dirs without a registry entry WARN, builder's identity files exist, template has every expected `{{placeholder}}`, no generated `agent.py` carries leftover placeholders. Exit 0 when no FAIL, 1 otherwise. Implementation: `agent_builder/doctor.py`.
+- `--remove NAME` / `--purge-all` — direct `remove_agent` calls without the SDK.
+
+### Version + version stamp
+
+`agent_builder/_version.py` is the single source of truth. It reads `importlib.metadata.version("claude-agent-sdk-playground")` with a `"unknown"` fallback for source-only checkouts. The builder's MCP server version reads from it; every generated `agent.py` stamps `GENERATED_WITH_BUILDER_VERSION = "<version>"` near the top so future tooling can detect regens from incompatible builder versions.
 
 ### Builder UX utilities
 
@@ -74,7 +99,7 @@ Tools generated for new agents must:
 - End `tools.py` with a `create_sdk_mcp_server(...)` call bound to the name `tools_server` (that's what `agent.py` and `test_agent` import)
 - Omit imports and the `TEST_MODE = False` line — `write_tools` prepends them
 
-The generated `agent.py` (from `templates/agent_main.py.tmpl`) wires a `PreToolUse` hook (`safety_hook`) that blocks `rm -rf /`, `DROP TABLE`, `DELETE FROM`, `> /dev/sda` in Bash. `{{agent_name}}`, `{{tools_list}}`, `{{allowed_tools_list}}`, `{{permission_mode}}` are template placeholders.
+The generated `agent.py` (from `templates/agent_main.py.tmpl`) wires a `PreToolUse` hook (`safety_hook`) on `Bash`, `Write`, and `Edit` — blocks destructive Bash patterns (`rm -rf /`, `DROP TABLE`, `DELETE FROM`, `> /dev/sda`, fork bomb) and refuses writes to sensitive paths (`.env`, `.git/`, `pyproject.toml`, `package.json`, `.ssh/`, `id_rsa`, `id_ed25519`, `credentials`). Template placeholders: `{{agent_name}}`, `{{agent_description}}`, `{{builder_version}}`, `{{tools_list}}`, `{{allowed_tools_list}}`, `{{permission_mode}}`, `{{max_turns}}`, `{{max_budget_usd}}`, `{{cli_args_block}}`, `{{cli_dispatch_block}}`, `{{cli_help_epilog}}`. Scaffold validates every expected placeholder is present in the template AND that none survive substitution before writing — a drift in either direction fails loudly rather than producing broken Python.
 
 ### Builder workflow (6 phases)
 
