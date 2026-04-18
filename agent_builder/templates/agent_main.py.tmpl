@@ -55,6 +55,40 @@ def build_claude_md(verbose: bool = False) -> None:
         print(f"[build_claude_md] Wrote CLAUDE.md ({len(combined)} chars total)")
 
 
+# --- Tool call formatter ---
+
+def _truncate(s, limit=80):
+    s = " ".join(str(s).split())
+    return s if len(s) <= limit else s[: limit - 1] + "..."
+
+
+def format_tool_call(name, tool_input):
+    """Render a short one-line summary of a tool call for the user."""
+    short_name = name.split("__")[-1] if name.startswith("mcp__") else name
+    previews = {
+        "Bash": ("command",),
+        "Read": ("file_path",),
+        "Edit": ("file_path",),
+        "Write": ("file_path",),
+        "Glob": ("pattern",),
+        "Grep": ("pattern",),
+        "WebFetch": ("url",),
+        "WebSearch": ("query",),
+    }
+    keys = previews.get(short_name)
+    if not keys and name.startswith("mcp__"):
+        keys = ("url", "query", "action", "prompt", "path")
+    if keys:
+        for k in keys:
+            v = tool_input.get(k)
+            if v:
+                return f"  [Tool: {short_name}] {k}={_truncate(v)}"
+    for k, v in tool_input.items():
+        if isinstance(v, (str, int, float, bool)):
+            return f"  [Tool: {short_name}] {k}={_truncate(v)}"
+    return f"  [Tool: {short_name}]"
+
+
 # --- Safety hook ---
 
 async def safety_hook(input_data, tool_use_id, context):
@@ -124,7 +158,7 @@ async def main():
                             if verbose:
                                 print(f"  [Tool: {block.name}] Input: {block.input}")
                             else:
-                                print(f"  [Tool: {block.name}]")
+                                print(format_tool_call(block.name, block.input))
                 elif isinstance(message, ResultMessage):
                     if message.is_error:
                         print(f"[Failed: {message.subtype}]")

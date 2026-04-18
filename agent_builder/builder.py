@@ -14,7 +14,7 @@ from claude_agent_sdk import (
     ToolUseBlock,
 )
 
-from agent_builder.utils import build_claude_md
+from agent_builder.utils import build_claude_md, format_tool_call
 from agent_builder.tools import builder_tools_server
 
 BUILDER_DIR = Path(__file__).parent.resolve()
@@ -78,7 +78,7 @@ async def main() -> None:
                             if verbose:
                                 print(f"  [Tool: {block.name}] Input: {block.input}")
                             else:
-                                print(f"  [Tool: {block.name}]")
+                                print(format_tool_call(block.name, block.input))
                 elif isinstance(message, ResultMessage):
                     if message.is_error:
                         print(f"[Failed: {message.subtype}]")
