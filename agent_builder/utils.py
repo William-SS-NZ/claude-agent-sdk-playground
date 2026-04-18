@@ -8,17 +8,24 @@ from typing import Any
 
 
 class Spinner:
-    """Async stderr spinner. Pause to print without smearing the line.
+    """Async stderr spinner with live token + cost readout.
 
     Usage:
         spinner = Spinner("thinking")
         spinner.start()
+        spinner.add_tokens(input_tokens=123, output_tokens=45)
+        spinner.set_cost(0.12)  # usually from ResultMessage.total_cost_usd
         with spinner.paused():
             print("tool output")
-        spinner.stop()
+        await spinner.stop()
     """
 
     FRAMES = ("|", "/", "-", "\\")
+
+    # Per-million-token pricing for live cost approximation until the SDK
+    # returns an authoritative total_cost_usd. Defaults to Claude Opus 4.x.
+    INPUT_PRICE_PER_MT = 15.0
+    OUTPUT_PRICE_PER_MT = 75.0
 
     def __init__(self, label: str = "working", stream=sys.stderr) -> None:
         self.label = label
@@ -26,24 +33,54 @@ class Spinner:
         self._task: asyncio.Task | None = None
         self._paused = False
         self._started_at: float | None = None
+        self.input_tokens = 0
+        self.output_tokens = 0
+        self.cost_usd: float | None = None  # None means "use estimate"
+
+    def add_tokens(self, input_tokens: int = 0, output_tokens: int = 0) -> None:
+        self.input_tokens += input_tokens
+        self.output_tokens += output_tokens
+
+    def set_cost(self, usd: float) -> None:
+        """Override the live estimate with an authoritative value."""
+        self.cost_usd = usd
+
+    def _estimated_cost(self) -> float:
+        if self.cost_usd is not None:
+            return self.cost_usd
+        return (
+            self.input_tokens * self.INPUT_PRICE_PER_MT / 1_000_000
+            + self.output_tokens * self.OUTPUT_PRICE_PER_MT / 1_000_000
+        )
+
+    def _render_line(self) -> str:
+        elapsed = time.monotonic() - (self._started_at or time.monotonic())
+        frame = self.FRAMES[int(elapsed * 10) % len(self.FRAMES)]
+        parts = [f"\r  {frame} {self.label} ({elapsed:5.1f}s)"]
+        if self.input_tokens or self.output_tokens:
+            total_tok = self.input_tokens + self.output_tokens
+            parts.append(f" | {total_tok:>6,} tok")
+            cost = self._estimated_cost()
+            cost_tag = "$" if self.cost_usd is not None else "~$"
+            parts.append(f" | {cost_tag}{cost:.4f}")
+            if elapsed > 1.0:
+                per_min = cost / (elapsed / 60)
+                parts.append(f" | {cost_tag}{per_min:.2f}/min")
+        return "".join(parts)
 
     async def _spin(self) -> None:
-        i = 0
         try:
             while True:
                 if not self._paused:
-                    elapsed = time.monotonic() - (self._started_at or time.monotonic())
-                    frame = self.FRAMES[i % len(self.FRAMES)]
-                    self.stream.write(f"\r  {frame} {self.label} ({elapsed:4.1f}s)")
+                    self.stream.write(self._render_line())
                     self.stream.flush()
-                i += 1
                 await asyncio.sleep(0.1)
         except asyncio.CancelledError:
             self._clear()
             raise
 
     def _clear(self) -> None:
-        self.stream.write("\r" + " " * 60 + "\r")
+        self.stream.write("\r" + " " * 120 + "\r")
         self.stream.flush()
 
     def start(self) -> None:

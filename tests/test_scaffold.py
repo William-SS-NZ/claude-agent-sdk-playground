@@ -99,3 +99,25 @@ async def test_scaffold_produces_parseable_python(tmp_path: Path):
     )
     source = (tmp_path / "parseme" / "agent.py").read_text(encoding="utf-8")
     ast.parse(source)
+
+
+@pytest.mark.asyncio
+async def test_scaffold_fails_on_unfilled_placeholder(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
+    """If the template contains a placeholder scaffold forgot to fill,
+    scaffold must error out rather than write invalid Python."""
+    import agent_builder.tools.scaffold as scaffold_mod
+    fake_template_dir = tmp_path / "templates"
+    fake_template_dir.mkdir()
+    (fake_template_dir / "agent_main.py.tmpl").write_text(
+        'AGENT_NAME = "{{agent_name}}"\nPHANTOM = {{missing_placeholder}}\n',
+        encoding="utf-8",
+    )
+    (fake_template_dir / "env_example.tmpl").write_text("ANTHROPIC_API_KEY=", encoding="utf-8")
+    monkeypatch.setattr(scaffold_mod, "TEMPLATES_DIR", fake_template_dir)
+
+    result = await scaffold_agent(
+        {"agent_name": "bad", "description": "x"},
+        output_base=str(tmp_path / "output"),
+    )
+    assert result.get("is_error") is True
+    assert "{{missing_placeholder}}" in result["content"][0]["text"]

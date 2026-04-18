@@ -23,11 +23,21 @@ pip install -e ".[dev]"
 Run the builder:
 
 ```bash
+# Interactive chat loop (default)
 python -m agent_builder.builder
 python -m agent_builder.builder --verbose   # raw SDK messages, tool inputs, token/cost info
+
+# Single prompt, exit when done
+python -m agent_builder.builder --prompt "build me a markdown summariser called md-summary"
+
+# Batch of prompts from a JSON spec
+python -m agent_builder.builder --spec build-specs/md-summary.json
+# spec: {"prompt": "..."}  or  {"prompts": ["...","..."]}
 ```
 
 The builder reads `ANTHROPIC_API_KEY` from your environment. Each generated agent has its own `.env` (template at `agent_builder/templates/env_example.tmpl`).
+
+Building takes time — typically 3-10 minutes end to end, with Phase 5 (testing) alone adding 1-3 min per test prompt. The spinner shows the current phase (`Phase 4: scaffolding files`, `Phase 5: testing agent`, ...) with elapsed seconds, and a one-line banner fires when each phase begins.
 
 ## Architecture
 

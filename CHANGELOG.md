@@ -3,12 +3,25 @@
 All notable changes to this project are documented here.
 Format loosely follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
-## [Unreleased]
+## [0.4.0] - 2026-04-18
 
 ### Added
 - `edit_agent` MCP tool for updating an existing agent's identity or `tools.py` in place. Only supplied fields overwrite; every changed file gets a `.bak-<timestamp>`. `tools_code` receives the canonical `TOOLS_HEADER` prepended, matching the `write_tools` contract. Does not touch `agent.py`, `.env.example`, or `.gitignore` (those stay scaffold-time artifacts).
 - `AGENT.md` gains an "Editing Existing Agents" section instructing the builder to read before proposing, only write changed fields, and tell the user to restart.
+- **Non-interactive builder modes**: `python -m agent_builder.builder --prompt "..."` sends a single prompt and exits. `--spec spec.json` runs a batch of prompts (spec shape: `{"prompt": "..."}` or `{"prompts": ["...","..."]}` or a bare JSON string). Lets you build agents from a script or CI pipeline without entering the chat loop.
+- **Phase-aware progress**: spinner label now reflects what the builder is actually doing (`Phase 4: scaffolding files`, `Phase 5: testing agent (can take 1-3 min)`, etc.) rather than a flat `thinking`. First use of each phase-anchoring tool prints a banner like `── Phase 4: scaffolding files ──`. Final result line includes elapsed seconds alongside the cost readout.
+- **Live token + cost readout** next to the spinner: `thinking ( 12.3s) | 45,678 tok | ~$0.21 | ~$1.05/min`. The spinner accumulates `input_tokens` / `output_tokens` from streamed `AssistantMessage.usage` and estimates cost at Claude Opus 4.x pricing (`$15/MT input + $75/MT output`) with a `~$` prefix to indicate the estimate. When `ResultMessage.total_cost_usd` arrives, the spinner switches to the authoritative value and drops the tilde. The same readout is inlined into every generated agent's REPL via the template.
+- **Scaffold unfilled-placeholder guard**: scaffold aborts with a clear error if any `{{...}}` survives template substitution, rather than writing a syntactically broken `agent.py` that `NameError`s on first run.
+- **Graceful Ctrl+C**: `KeyboardInterrupt` at the top-level asyncio loop exits cleanly; `KeyboardInterrupt` during a response cancels that response and returns to the prompt without losing the session.
 - Regression tests for `test_agent`: `TEST_MODE = False` must be restored in the `tools.py` of the agent under test even when `_load_tools_server` crashes or a prompt run raises. Previously only implicit via the `finally` block — now explicitly covered.
+- Tests for the spec loader and phase label/banner helpers.
+
+### Changed
+- `AGENT.md` Phase 1 hardened: the builder must ask for the agent name explicitly and wait for the user's reply before proceeding, even when the initial description makes a name obvious. A prior build auto-named an agent without confirmation; this prevents that.
+- `AGENT.md` Phase 5 warns up front that testing takes 1-3 minutes per prompt, so users know why the spinner sits on `Phase 5: testing agent` for a while.
+
+### Fixed
+- Scaffolded `output/<name>/agent.py` is now always parseable Python — the unfilled-placeholder guard catches the case where a builder session was started with older in-process code and missed a newer placeholder in the template.
 
 ## [0.3.0] - 2026-04-18
 

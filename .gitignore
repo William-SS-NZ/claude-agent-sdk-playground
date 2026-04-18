@@ -33,6 +33,9 @@ audit.log
 # Generated agents
 output/
 
+# Screenshots produced by live-browser agents (e.g. ux-alchemist)
+screenshots/
+
 # Build artifacts
 agent_builder/CLAUDE.md
 

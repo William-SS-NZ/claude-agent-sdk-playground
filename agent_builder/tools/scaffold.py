@@ -71,6 +71,19 @@ async def scaffold_agent(args: dict[str, Any], output_base: str = "output") -> d
         .replace("{{max_turns}}", str(max_turns))
         .replace("{{max_budget_usd}}", f"{max_budget_usd:.2f}")
     )
+
+    # Fail loudly if any placeholder survived — the generated agent.py would
+    # be invalid Python and fail with NameError on first run otherwise.
+    unfilled = re.findall(r"\{\{[^}]+\}\}", agent_py)
+    if unfilled:
+        return {
+            "content": [{"type": "text", "text": (
+                f"Template has unfilled placeholders after substitution: {sorted(set(unfilled))}. "
+                "This is a builder bug — update scaffold_agent to fill them."
+            )}],
+            "is_error": True,
+        }
+
     (agent_dir / "agent.py").write_text(agent_py, encoding="utf-8")
 
     # Render .env.example
