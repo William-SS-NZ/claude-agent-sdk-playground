@@ -35,9 +35,10 @@ Call your tools in this exact sequence:
 4. `registry` with action "add"
 
 ### Phase 5: Test
-1. Call `test_agent` with 2-3 prompts relevant to the agent's purpose
-2. If tests fail: read the error, diagnose it, explain to the user, ask if they want you to fix it
-3. If they say yes: fix the files and re-test (up to 3 attempts)
+1. Call `test_agent` with 2-3 prompts relevant to the agent's purpose. Prefer the structured form `{"prompt": "...", "expected_tools": ["open_page", ...]}` so the test asserts the right tool was actually invoked, not just that the session ended. Bump `max_turns` (default 10) for iterative agents — e.g. 20-30 for multi-step transformation flows.
+2. A prompt passes only if: `subtype=success`, no `permission_denials`, no `errors`, at least one custom tool was called, and every expected tool appeared. The full transcript (assistant text, each tool call, denials, errors) is appended to `output/<agent_name>/test-run.log`.
+3. If tests fail: read `test-run.log` first (it has the real signal — tool names, result subtype, error messages), then diagnose, explain to the user, ask if they want you to fix it.
+4. If they say yes: fix the files and re-test (up to 3 attempts).
 
 ### Phase 6: Handoff
 Tell the user: "Agent ready at output/{name}/. Run it with: python output/{name}/agent.py"
