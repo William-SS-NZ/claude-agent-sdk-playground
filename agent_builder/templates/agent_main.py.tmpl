@@ -2,8 +2,10 @@
 
 import asyncio
 import argparse
+import logging
 import sys
 import time
+import traceback
 from pathlib import Path
 
 from claude_agent_sdk import (
@@ -19,6 +21,19 @@ from claude_agent_sdk import (
 
 AGENT_NAME = "{{agent_name}}"
 AGENT_DIR = Path(__file__).parent.resolve()
+LOG_PATH = AGENT_DIR / f"{AGENT_NAME}.log"
+
+# --- Logging setup ---
+logger = logging.getLogger(f"agent.{AGENT_NAME}")
+if not logger.handlers:
+    logger.setLevel(logging.DEBUG)
+    _fh = logging.FileHandler(LOG_PATH, encoding="utf-8")
+    _fh.setFormatter(logging.Formatter(
+        "%(asctime)s [%(levelname)s] %(message)s",
+        datefmt="%Y-%m-%d %H:%M:%S",
+    ))
+    logger.addHandler(_fh)
+    logger.propagate = False
 
 # --- Identity bootstrap ---
 
@@ -177,6 +192,9 @@ async def main():
     args = parser.parse_args()
     verbose = args.verbose
 
+    logger.info("agent startup: cwd=%s verbose=%s", AGENT_DIR, verbose)
+    print(f"  Log file: {LOG_PATH}")
+
     build_claude_md(verbose=verbose)
 
     from tools import tools_server  # noqa: E402
@@ -191,29 +209,36 @@ async def main():
         hooks={
             "PreToolUse": [HookMatcher(matcher="Bash", hooks=[safety_hook])],
         },
-        max_turns=25,
-        max_budget_usd=1.00,
+        max_turns={{max_turns}},
+        max_budget_usd={{max_budget_usd}},
     )
 
     async with ClaudeSDKClient(options=options) as client:
         print(f"\n  {AGENT_NAME} ready. Type 'exit' to quit.\n")
 
         while True:
-            user_input = await asyncio.to_thread(input, "> ")
+            try:
+                user_input = await asyncio.to_thread(input, "> ")
+            except (EOFError, KeyboardInterrupt):
+                logger.info("agent interrupted by user")
+                break
             if user_input.strip().lower() in ("exit", "quit"):
                 break
 
-            await client.query(user_input)
+            logger.info("user_input: %s", user_input)
+
             spinner = Spinner("thinking") if not verbose else None
             if spinner:
                 spinner.start()
             try:
+                await client.query(user_input)
                 async for message in client.receive_response():
                     if verbose:
                         print(f"[{message.__class__.__name__}] {message}")
 
                     if isinstance(message, AssistantMessage):
                         if message.error:
+                            logger.error("assistant error: %s", message.error)
                             ctx = spinner.paused() if spinner else _NullCtx()
                             with ctx:
                                 print(f"[Error: {message.error}]")
@@ -224,6 +249,7 @@ async def main():
                                 if isinstance(block, TextBlock):
                                     print(block.text)
                                 elif isinstance(block, ToolUseBlock):
+                                    logger.info("tool_use: name=%s input=%s", block.name, block.input)
                                     if verbose:
                                         print(f"  [Tool: {block.name}] Input: {block.input}")
                                     else:
@@ -234,6 +260,7 @@ async def main():
                         ctx = spinner.paused() if spinner else _NullCtx()
                         with ctx:
                             if message.is_error:
+                                logger.error("result error subtype=%s", message.subtype)
                                 print(f"[Failed: {message.subtype}]")
                             if verbose:
                                 print(f"  [Session: {message.session_id}]")
@@ -245,10 +272,18 @@ async def main():
                     elif verbose and isinstance(message, SystemMessage):
                         if message.subtype == "init":
                             print(f"  [Init: {message.data}]")
+            except Exception as e:
+                logger.error("loop error: %s\n%s", e, traceback.format_exc())
+                print(f"[Unexpected error: {e} — see {LOG_PATH.name}]")
             finally:
                 if spinner:
                     await spinner.stop()
 
 
 if __name__ == "__main__":
-    asyncio.run(main())
+    try:
+        asyncio.run(main())
+    except Exception as e:
+        logger.critical("fatal: %s\n%s", e, traceback.format_exc())
+        print(f"[Fatal: {e} — see {LOG_PATH.name}]")
+        raise

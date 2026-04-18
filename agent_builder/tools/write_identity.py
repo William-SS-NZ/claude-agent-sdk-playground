@@ -12,6 +12,12 @@ FILE_MAP = {
     "user_md": "USER.md",
 }
 
+# Windows spawns the claude CLI with the system prompt inline. CreateProcessW's
+# lpCommandLine caps at 8191 chars, so leave headroom below that for the
+# combined AGENT.md + SOUL.md + MEMORY.md + USER.md content that becomes the
+# system prompt via setting_sources=["project"].
+IDENTITY_SOFT_LIMIT = 6000
+
 
 async def write_identity(args: dict[str, Any], output_base: str = "output") -> dict[str, Any]:
     """Write identity files for a generated agent.
@@ -34,6 +40,7 @@ async def write_identity(args: dict[str, Any], output_base: str = "output") -> d
 
     written: list[str] = []
     total_chars = 0
+    per_file_sizes: list[tuple[str, int]] = []
 
     for key, filename in FILE_MAP.items():
         content = args.get(key)
@@ -42,15 +49,23 @@ async def write_identity(args: dict[str, Any], output_base: str = "output") -> d
         (agent_dir / filename).write_text(content, encoding="utf-8")
         written.append(filename)
         total_chars += len(content)
+        per_file_sizes.append((filename, len(content)))
 
-    return {
-        "content": [
-            {
-                "type": "text",
-                "text": f"Wrote identity files for '{agent_name}': {', '.join(written)} ({total_chars} chars total)",
-            }
-        ]
-    }
+    size_breakdown = ", ".join(f"{n}={s}" for n, s in per_file_sizes)
+    summary = (
+        f"Wrote identity files for '{agent_name}': {', '.join(written)} "
+        f"({total_chars} chars total — {size_breakdown})"
+    )
+    if total_chars > IDENTITY_SOFT_LIMIT:
+        summary += (
+            f"\n[WARNING] Total identity content ({total_chars} chars) exceeds the "
+            f"{IDENTITY_SOFT_LIMIT}-char soft limit. On Windows the claude CLI's "
+            "8191-char command-line cap may cause subprocess failures. "
+            "Consider trimming AGENT.md/SOUL.md/MEMORY.md or splitting detail "
+            "into a reference doc the agent reads on demand."
+        )
+
+    return {"content": [{"type": "text", "text": summary}]}
 
 
 # MCP tool registration — wraps the async function for use with create_sdk_mcp_server()

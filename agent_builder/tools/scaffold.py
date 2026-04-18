@@ -42,6 +42,8 @@ async def scaffold_agent(args: dict[str, Any], output_base: str = "output") -> d
     tools_list = args.get("tools_list", ["Read", "Glob", "Grep"])
     allowed_tools_list = args.get("allowed_tools_list", list(tools_list))
     permission_mode = args.get("permission_mode", "acceptEdits")
+    max_turns = int(args.get("max_turns", 25))
+    max_budget_usd = float(args.get("max_budget_usd", 1.00))
 
     error = _validate_agent_name(agent_name, output_base)
     if error:
@@ -66,6 +68,8 @@ async def scaffold_agent(args: dict[str, Any], output_base: str = "output") -> d
         .replace("{{tools_list}}", repr(list(tools_list)))
         .replace("{{allowed_tools_list}}", repr(list(allowed_tools_list)))
         .replace("{{permission_mode}}", permission_mode)
+        .replace("{{max_turns}}", str(max_turns))
+        .replace("{{max_budget_usd}}", f"{max_budget_usd:.2f}")
     )
     (agent_dir / "agent.py").write_text(agent_py, encoding="utf-8")
 
@@ -94,7 +98,9 @@ scaffold_agent_tool = tool(
     "Create the directory structure and boilerplate files for a new agent. "
     "tools_list: builtin tool names (e.g. ['Read','Edit','Bash']). "
     "allowed_tools_list: full allowed list including mcp__agent_tools__* entries. "
-    "permission_mode: 'default', 'acceptEdits', 'bypassPermissions', or 'plan'.",
+    "permission_mode: 'default', 'acceptEdits', 'bypassPermissions', or 'plan'. "
+    "max_turns: safety cap on SDK turns per user message (default 25, raise for iterative agents). "
+    "max_budget_usd: per-conversation USD budget cap (default 1.00).",
     {
         "type": "object",
         "properties": {
@@ -103,6 +109,8 @@ scaffold_agent_tool = tool(
             "tools_list": {"type": "array", "items": {"type": "string"}},
             "allowed_tools_list": {"type": "array", "items": {"type": "string"}},
             "permission_mode": {"type": "string"},
+            "max_turns": {"type": "integer"},
+            "max_budget_usd": {"type": "number"},
         },
         "required": ["agent_name", "description"],
     },
