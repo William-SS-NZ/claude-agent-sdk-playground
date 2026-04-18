@@ -80,7 +80,7 @@ The builder's `AGENT.md` enforces: Discovery → Tool Design → Identity → Ge
 
 ### Path conventions
 
-Paths use `Path(__file__).parent` throughout — run from any cwd. The builder's `cwd` is set to `agent_builder/` so `output/` resolves to `agent_builder/output/` when invoked via the builder, but tests and tools default to `output_base="output"` relative to caller.
+Paths use `Path(__file__).parent` throughout — run from any cwd. The `cwd=` kwarg on `ClaudeAgentOptions` only affects the CLI subprocess the SDK spawns; in-process MCP tools (which run in the same Python process as `builder.py`) see the *Python process's* cwd, which is typically the repo root. That is why generated agents land in repo-root `output/<name>/` rather than `agent_builder/output/<name>/`. Tools default to `output_base="output"` relative to the Python process cwd.
 
 ## Testing notes
 

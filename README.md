@@ -152,7 +152,7 @@ python output/<name>/agent.py
 python output/<name>/agent.py --verbose
 ```
 
-Each generated `agent.py` rebuilds its `CLAUDE.md` from the four identity files at startup, registers a `PreToolUse` `safety_hook` on `Bash` that blocks `rm -rf /`, `DROP TABLE`, `DELETE FROM`, and `> /dev/sda`, and runs an interactive REPL with `max_turns=25` and `max_budget_usd=1.00` by default.
+Each generated `agent.py` rebuilds its `CLAUDE.md` from the four identity files at startup, registers a `PreToolUse` `safety_hook` on `Bash`, `Write`, and `Edit` (blocks destructive bash patterns like `rm -rf /`, `DROP TABLE`, `DELETE FROM`, `> /dev/sda`, fork bombs; and refuses writes to sensitive paths like `.env`, `.git/`, `pyproject.toml`, `package.json`, `.ssh/`, `id_rsa`, `id_ed25519`, `credentials`). It runs an interactive REPL with `max_turns`/`max_budget_usd` chosen at scaffold time (defaults 25 / $1.00). Both a per-agent log at `output/<name>/<name>.log` and a per-test-run log at `output/<name>/test-run.log` are maintained automatically.
 
 A `Spinner` (inlined into the template, not imported from `agent_builder`) shows `| / - \` frames on stderr with an elapsed-seconds counter; its label flips to `running <tool>` while a tool executes and back to `thinking` between turns. `format_tool_call` renders one-line previews per tool call (picks the most informative field: `command`, `file_path`, `pattern`, `url`, `action`, ...; truncates to 80 chars; strips the `mcp__<server>__` prefix).
 
@@ -167,6 +167,14 @@ A `Spinner` (inlined into the template, not imported from `agent_builder`) shows
 
 Edit source identity files (`AGENT.md` / `SOUL.md` / `MEMORY.md`), never the generated `CLAUDE.md`. Run `pytest` before opening a PR. Keep generated agent output (`output/`) out of commits.
 
+Optional: enable the shared pre-commit hook (runs pytest before every commit):
+
+```bash
+git config core.hooksPath .githooks
+```
+
+The activation is per-clone — each contributor opts in. The hook skips gracefully if `python` or `pytest` aren't on `PATH`, so it won't lock you out of committing when you don't have the dev env active.
+
 ## License
 
-TBD — no `LICENSE` file in the repo yet.
+[PolyForm Noncommercial 1.0.0](LICENSE). Free to use, modify, and share for any noncommercial purpose (personal projects, research, education, hobby, public-interest organisations). Commercial use is not granted under this licence — contact the author if you want a commercial licence.

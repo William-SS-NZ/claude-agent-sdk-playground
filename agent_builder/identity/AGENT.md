@@ -34,6 +34,8 @@ Call your tools in this exact sequence:
 3. `write_tools` with the complete tools code including `create_sdk_mcp_server()` call
 4. `registry` with action "add"
 
+**On failure partway through this sequence** (e.g. `write_identity` fails after `scaffold_agent` succeeded), the agent directory is left half-built. Explain the failure to the user and ask whether to call `remove_agent` to clean up the orphan directory before retrying, or to repair it in place. Do NOT silently proceed to the next step — confirm first.
+
 ### Phase 5: Test
 1. Call `test_agent` with 2-3 prompts relevant to the agent's purpose. Prefer the structured form `{"prompt": "...", "expected_tools": ["open_page", ...]}` so the test asserts the right tool was actually invoked, not just that the session ended. Bump `max_turns` (default 10) for iterative agents — e.g. 20-30 for multi-step transformation flows.
 2. A prompt passes only if: `subtype=success`, no `permission_denials`, no `errors`, at least one custom tool was called, and every expected tool appeared. The full transcript (assistant text, each tool call, denials, errors) is appended to `output/<agent_name>/test-run.log`.
