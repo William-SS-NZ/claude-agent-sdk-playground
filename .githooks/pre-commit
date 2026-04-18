@@ -1,0 +1,37 @@
+#!/usr/bin/env bash
+# Pre-commit hook: run pytest against the repo. Abort commit on test failure.
+# Activate via: git config core.hooksPath .githooks
+
+set -u
+
+# Resolve repo root so the hook works from any cwd
+REPO_ROOT="$(git rev-parse --show-toplevel 2>/dev/null)"
+if [ -z "${REPO_ROOT}" ]; then
+    echo "[pre-commit] Not inside a git repo; skipping." >&2
+    exit 0
+fi
+
+cd "${REPO_ROOT}" || exit 0
+
+# Bail out gracefully if Python is missing
+if ! command -v python >/dev/null 2>&1; then
+    echo "[pre-commit] WARNING: 'python' not found on PATH; skipping tests." >&2
+    exit 0
+fi
+
+# Bail out gracefully if pytest is not installed in the active env
+if ! python -c "import pytest" >/dev/null 2>&1; then
+    echo "[pre-commit] WARNING: pytest not installed in this Python env; skipping tests." >&2
+    echo "[pre-commit]          (Activate your venv and 'pip install pytest' to enable this hook.)" >&2
+    exit 0
+fi
+
+echo "[pre-commit] Running: python -m pytest -q"
+if ! python -m pytest -q; then
+    echo "[pre-commit] FAILED: pytest reported failures. Commit aborted." >&2
+    echo "[pre-commit] Fix the failing tests or use 'git commit --no-verify' to bypass." >&2
+    exit 1
+fi
+
+echo "[pre-commit] OK: tests passed."
+exit 0
