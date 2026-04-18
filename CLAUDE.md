@@ -43,15 +43,25 @@ Every agent (the builder itself and every generated agent) is defined by four ma
 
 ### Builder tools (MCP server)
 
-`agent_builder/tools/__init__.py` assembles one in-process SDK MCP server (`builder_tools_server`) from five tools. Each is a `@tool`-decorated async function wired via `create_sdk_mcp_server`. All return MCP shape `{"content": [{"type": "text", "text": ...}], "is_error"?: bool}`:
+`agent_builder/tools/__init__.py` assembles one in-process SDK MCP server (`builder_tools_server`) from six tools. Each is a `@tool`-decorated async function wired via `create_sdk_mcp_server`. All return MCP shape `{"content": [{"type": "text", "text": ...}], "is_error"?: bool}`:
 
-- `scaffold_agent` — validates name against `^[a-z0-9][a-z0-9-]*$` + path-traversal guard, creates `output/<name>/` with `agent.py` (from `templates/agent_main.py.tmpl`), `.env.example`, `.gitignore`
+- `scaffold_agent` — validates name against `^[a-z0-9][a-z0-9-]*$` + path-traversal guard, creates `output/<name>/` with `agent.py` (from `templates/agent_main.py.tmpl`), `.env.example`, `.gitignore`. Accepts `tools_list`, `allowed_tools_list`, `permission_mode` so the generated `agent.py` is valid Python with no unfilled placeholders.
 - `write_identity` — writes `AGENT.md`/`SOUL.md`/`MEMORY.md`/`USER.md` into the agent dir
 - `write_tools` — writes `tools.py`, prepending the fixed `TOOLS_HEADER` (imports + `TEST_MODE = False`); the caller-supplied `tools_code` must NOT include those
 - `test_agent` — flips `TEST_MODE = True` in the agent's `tools.py`, imports it dynamically via `importlib.util`, runs each prompt through `query()` with `max_turns=5`, then always restores `TEST_MODE = False` in a `finally` block
-- `registry` — `add`/`list`/`describe` against `agent_builder/registry/agents.json`
+- `registry` — `add` (upserts by name), `remove`, `list`, `describe` against `agent_builder/registry/agents.json`
+- `remove_agent` — safely deletes `output/<name>/` via `shutil.rmtree` and drops the registry entry in one call. Same validation as `scaffold_agent`; refuses anything resolving outside `output_base`.
 
 Adding a new builder tool: create `agent_builder/tools/<name>.py`, import and register in `tools/__init__.py`, add to `allowed_tools` in `builder.py` as `"mcp__builder_tools__<name>"`.
+
+### Builder UX utilities
+
+`agent_builder/utils.py` exposes two helpers used by `builder.py` and the generated-agent template:
+
+- `Spinner` — async stderr spinner (`|/-\\` frames) with elapsed-seconds counter, `start()` / `await stop()` / context-manager `paused()` for clean printing without smearing the line. The spinner label updates to `running <tool>` while a tool executes.
+- `format_tool_call(name, input)` — one-line preview per tool call, picks the most informative field (command, file_path, pattern, url, action...), truncates to 80 chars, strips the `mcp__<server>__` prefix.
+
+Both are inlined into `agent_main.py.tmpl` so generated agents ship with the same UX without importing from `agent_builder`.
 
 ### Generated-agent contract
 

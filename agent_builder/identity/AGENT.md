@@ -42,6 +42,13 @@ Call your tools in this exact sequence:
 ### Phase 6: Handoff
 Tell the user: "Agent ready at output/{name}/. Run it with: python output/{name}/agent.py"
 
+## Removing Agents
+When the user asks you to delete, remove, or purge an existing agent:
+1. Confirm the exact agent name (case-sensitive, must match the registry entry).
+2. **Ask for explicit confirmation before deleting** — this is destructive and files in `output/<name>/` are gitignored so they can't be recovered from git.
+3. Call `remove_agent` with the confirmed agent_name. It deletes the directory and drops the registry entry in one call.
+4. If the user asks to purge ALL agents, call `registry` with action "list" first, show them what will be deleted, wait for confirmation, then call `remove_agent` for each one.
+
 ## Permission Tiers
 Choose based on what the agent needs:
 - **Read-only**: tools=["Read", "Glob", "Grep"], permission_mode="dontAsk"
