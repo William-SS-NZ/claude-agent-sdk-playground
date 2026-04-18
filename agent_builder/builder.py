@@ -40,6 +40,8 @@ from claude_agent_sdk import (
 
 from agent_builder.utils import Spinner, build_claude_md, format_tool_call
 from agent_builder.tools import builder_tools_server
+from agent_builder.tools.remove_agent import remove_agent as _remove_agent_fn
+from agent_builder.tools.registry import DEFAULT_REGISTRY as _REGISTRY_PATH
 
 
 class _NullCtx:
@@ -211,6 +213,57 @@ def _load_spec(spec_path: str) -> list[str]:
     raise ValueError("spec must contain 'prompt' (str) or 'prompts' (list[str])")
 
 
+def _registered_agent_names() -> list[str]:
+    path = Path(_REGISTRY_PATH)
+    if not path.exists():
+        return []
+    try:
+        agents = json.loads(path.read_text(encoding="utf-8"))
+    except json.JSONDecodeError:
+        return []
+    return [a["name"] for a in agents if "name" in a]
+
+
+def _confirm(prompt: str) -> bool:
+    try:
+        answer = input(prompt)
+    except (EOFError, KeyboardInterrupt):
+        return False
+    return answer.strip().lower() in ("y", "yes")
+
+
+async def _cli_remove(agent_names: list[str], yes: bool) -> int:
+    """Direct remove — no SDK, no model, no cost. Returns exit code."""
+    if not agent_names:
+        print("No agent names supplied.", file=sys.stderr)
+        return 2
+
+    if not yes:
+        print("About to delete:")
+        for n in agent_names:
+            print(f"  - output/{n}/ and its registry entry")
+        if not _confirm("Proceed? [y/N]: "):
+            print("Aborted.")
+            return 1
+
+    failures = 0
+    for name in agent_names:
+        result = await _remove_agent_fn({"agent_name": name})
+        text = result["content"][0]["text"]
+        print(text)
+        if result.get("is_error"):
+            failures += 1
+    return 0 if failures == 0 else 1
+
+
+async def _cli_purge_all(yes: bool) -> int:
+    names = _registered_agent_names()
+    if not names:
+        print("Registry is already empty.")
+        return 0
+    return await _cli_remove(names, yes)
+
+
 async def main() -> None:
     parser = argparse.ArgumentParser(
         description="Agent Builder — create agents through conversation",
@@ -224,7 +277,33 @@ async def main() -> None:
         "--spec",
         help="Non-interactive mode: JSON file with {'prompt': '...'} or {'prompts': ['...','...']}.",
     )
+    parser.add_argument(
+        "--remove",
+        action="append",
+        metavar="NAME",
+        help="Directly remove an agent (output dir + registry entry). Repeatable. No SDK / no cost. Prompts for confirmation unless --yes.",
+    )
+    parser.add_argument(
+        "--purge-all",
+        action="store_true",
+        help="Remove every agent listed in the registry. Prompts for confirmation unless --yes.",
+    )
+    parser.add_argument(
+        "--yes",
+        action="store_true",
+        help="Skip confirmation prompts for destructive operations (--remove / --purge-all).",
+    )
     args = parser.parse_args()
+
+    # Direct CLI actions that skip the SDK entirely
+    if args.remove or args.purge_all:
+        if args.prompt or args.spec:
+            parser.error("--remove / --purge-all cannot be combined with --prompt / --spec")
+        if args.remove and args.purge_all:
+            parser.error("use --remove or --purge-all, not both")
+        if args.purge_all:
+            sys.exit(await _cli_purge_all(args.yes))
+        sys.exit(await _cli_remove(args.remove, args.yes))
 
     if args.prompt and args.spec:
         parser.error("use --prompt or --spec, not both")

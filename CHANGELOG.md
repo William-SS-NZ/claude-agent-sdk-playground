@@ -3,6 +3,11 @@
 All notable changes to this project are documented here.
 Format loosely follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [0.4.1] - 2026-04-18
+
+### Added
+- `--remove NAME` (repeatable) and `--purge-all` CLI flags on `python -m agent_builder.builder`. These call the `remove_agent` tool's underlying function directly — no SDK subprocess, no model roundtrip, no cost — so mass cleanup is instant. Both prompt for confirmation by default; pass `--yes` to skip (useful from scripts / CI). `--remove` and `--purge-all` are mutually exclusive with `--prompt` / `--spec`.
+
 ## [0.4.0] - 2026-04-18
 
 ### Added

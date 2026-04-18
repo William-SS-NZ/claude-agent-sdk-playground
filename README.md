@@ -33,6 +33,12 @@ python -m agent_builder.builder --prompt "build me a markdown summariser called 
 # Batch of prompts from a JSON spec
 python -m agent_builder.builder --spec build-specs/md-summary.json
 # spec: {"prompt": "..."}  or  {"prompts": ["...","..."]}
+
+# Direct cleanup — no SDK / no cost, instant
+python -m agent_builder.builder --remove md-summary
+python -m agent_builder.builder --remove a --remove b
+python -m agent_builder.builder --purge-all            # every agent in the registry
+python -m agent_builder.builder --purge-all --yes      # skip confirmation (scripts / CI)
 ```
 
 The builder reads `ANTHROPIC_API_KEY` from your environment. Each generated agent has its own `.env` (template at `agent_builder/templates/env_example.tmpl`).
