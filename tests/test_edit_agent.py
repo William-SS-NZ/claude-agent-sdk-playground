@@ -1,3 +1,4 @@
+import json
 from pathlib import Path
 
 import pytest
@@ -111,3 +112,73 @@ async def test_edit_agent_creates_user_md_when_first_supplied(output_base: Path)
     assert (agent_dir / "USER.md").read_text(encoding="utf-8") == "# User\nName: W"
     # No backup because USER.md didn't exist before
     assert not list(agent_dir.glob("USER.md.bak-*"))
+
+
+@pytest.mark.asyncio
+async def test_edit_agent_advances_registry_updated_at(
+    output_base: Path, tmp_path: Path
+):
+    _seed_agent(output_base, "tracked")
+
+    # Seed a registry entry with a stale updated_at.
+    registry_file = tmp_path / "agents.json"
+    registry_file.write_text(json.dumps([{
+        "name": "tracked",
+        "description": "d",
+        "tools": [],
+        "created": "2020-01-01",
+        "updated_at": "2020-01-01",
+        "path": "output/tracked/",
+        "status": "active",
+    }]), encoding="utf-8")
+
+    result = await edit_agent(
+        {"agent_name": "tracked", "agent_md": "# v2"},
+        output_base=str(output_base),
+        registry_file=str(registry_file),
+    )
+    assert "is_error" not in result
+
+    data = json.loads(registry_file.read_text(encoding="utf-8"))
+    assert data[0]["updated_at"] != "2020-01-01"
+    assert data[0]["created"] == "2020-01-01"  # untouched
+
+
+@pytest.mark.asyncio
+async def test_edit_agent_silent_when_not_in_registry(
+    output_base: Path, tmp_path: Path
+):
+    _seed_agent(output_base, "ghost-in-registry")
+
+    registry_file = tmp_path / "agents.json"
+    registry_file.write_text("[]", encoding="utf-8")
+
+    result = await edit_agent(
+        {"agent_name": "ghost-in-registry", "agent_md": "# v2"},
+        output_base=str(output_base),
+        registry_file=str(registry_file),
+    )
+
+    assert "is_error" not in result
+    # Registry should still be empty — no entry added, no error raised.
+    assert json.loads(registry_file.read_text(encoding="utf-8")) == []
+
+
+@pytest.mark.asyncio
+async def test_edit_agent_tolerates_missing_registry_file(
+    output_base: Path, tmp_path: Path
+):
+    _seed_agent(output_base, "no-registry")
+
+    # Point at a registry file that doesn't exist.
+    missing = tmp_path / "does-not-exist.json"
+    assert not missing.exists()
+
+    result = await edit_agent(
+        {"agent_name": "no-registry", "agent_md": "# v2"},
+        output_base=str(output_base),
+        registry_file=str(missing),
+    )
+
+    assert "is_error" not in result
+    assert not missing.exists()  # we didn't create it just to bump

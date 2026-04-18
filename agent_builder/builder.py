@@ -94,6 +94,7 @@ def _build_options() -> ClaudeAgentOptions:
             "mcp__builder_tools__remove_agent",
             "mcp__builder_tools__propose_self_change",
             "mcp__builder_tools__edit_agent",
+            "mcp__builder_tools__rollback",
             "Read", "Write", "Edit", "Glob", "Grep", "Bash",
         ],
         permission_mode="acceptEdits",

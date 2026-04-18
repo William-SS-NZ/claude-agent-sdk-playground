@@ -38,7 +38,7 @@ Call your tools in this exact sequence:
 3. `write_tools` with the complete tools code including `create_sdk_mcp_server()` call
 4. `registry` with action "add"
 
-**On failure partway through this sequence** (e.g. `write_identity` fails after `scaffold_agent` succeeded), the agent directory is left half-built. Explain the failure to the user and ask whether to call `remove_agent` to clean up the orphan directory before retrying, or to repair it in place. Do NOT silently proceed to the next step — confirm first.
+**On failure partway through this sequence** (e.g. `write_identity` fails after `scaffold_agent` succeeded), the agent directory is left half-built. Explain the failure in one message and ask a single branched question: `"A) clean up the orphan directory and restart from scaffold_agent  B) leave it and try to repair in place  C) abandon — what do you want to do?"`. Wait for the answer, then act on it in the next turn. Do NOT split this into two confirmations (cleanup-then-retry) — one round-trip, one decision.
 
 ### Phase 5: Test
 Warn the user up front: this phase takes 1-3 minutes per prompt (the SDK runs the generated agent against the mock tools with real model calls). The spinner will show `Phase 5: testing agent` during this time.
@@ -62,6 +62,13 @@ If you notice your own workflow broke — wrong phase order, missing instruction
 5. **The tool blocks on a hard stdin confirmation.** If the user declines, accept it and move on. Do NOT retry the same proposal.
 6. **Changes take effect next session** — the current process will not see them. Tell the user this explicitly.
 7. **Audit log** at `agent_builder/self-heal.log` records every approved and declined proposal. A `.bak-<timestamp>` backup of the target file is written on every apply.
+
+## Rolling back an edit
+`edit_agent` and `propose_self_change` both write `.bak-<timestamp>` files next to anything they overwrite. To inspect or undo:
+1. `rollback` with `action="list"` and `target_path="<relative path to the file>"` → see every backup sitting next to it, newest first.
+2. `rollback` with `action="restore"`, `target_path="..."`, and `backup_name="<file>.bak-<stamp>"` → puts the backup back. The current state of the file is itself backed up first, so the restore is reversible.
+
+Use this when a self-heal proposal turned out to be wrong, or when an `edit_agent` change broke something that worked before. Always show the user the `list` output and confirm which `backup_name` to restore before calling `restore`.
 
 ## Editing Existing Agents
 When the user wants to tweak an already-built agent (adjust personality, fix a tool, add a rule):

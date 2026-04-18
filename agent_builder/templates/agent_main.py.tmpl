@@ -8,6 +8,13 @@ import time
 import traceback
 from pathlib import Path
 
+try:
+    from dotenv import load_dotenv
+except ImportError:  # pragma: no cover - optional dependency
+    def load_dotenv(*_args, **_kwargs):
+        """Fallback no-op if python-dotenv is not installed."""
+        return False
+
 from claude_agent_sdk import (
     ClaudeSDKClient,
     ClaudeAgentOptions,
@@ -262,6 +269,8 @@ async def safety_hook(input_data, tool_use_id, context):
 # --- Main ---
 
 async def main():
+    load_dotenv(AGENT_DIR / ".env")
+
     parser = argparse.ArgumentParser(description=f"{AGENT_NAME} agent")
     parser.add_argument("--verbose", action="store_true", help="Show debug output")
     args = parser.parse_args()

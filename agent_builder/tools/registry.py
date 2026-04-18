@@ -22,17 +22,30 @@ async def registry(args: dict[str, Any], registry_file: str = DEFAULT_REGISTRY) 
 
     if action == "add":
         agent_name = args.get("agent_name", "")
+        today = date.today().isoformat()
         entry = {
             "name": agent_name,
             "description": args.get("description", ""),
             "tools": args.get("tools_list", []),
-            "created": date.today().isoformat(),
+            "created": today,
+            "updated_at": today,
             "path": f"output/{agent_name}/",
             "status": "active",
+            "max_turns": args.get("max_turns"),
+            "max_budget_usd": args.get("max_budget_usd"),
+            "permission_mode": args.get("permission_mode"),
         }
-        existing_idx = next((i for i, a in enumerate(agents) if a["name"] == agent_name), None)
+        existing_idx = next((i for i, a in enumerate(agents) if a.get("name") == agent_name), None)
         if existing_idx is not None:
-            entry["created"] = agents[existing_idx].get("created", entry["created"])
+            prev = agents[existing_idx]
+            # Preserve original creation date; refresh updated_at to today.
+            entry["created"] = prev.get("created", entry["created"])
+            entry["updated_at"] = today
+            # Fall back to previous values for any SDK-config fields the caller
+            # didn't pass this round, so partial updates don't wipe state.
+            for key in ("max_turns", "max_budget_usd", "permission_mode"):
+                if entry[key] is None:
+                    entry[key] = prev.get(key)
             agents[existing_idx] = entry
             verb = "Updated"
         else:
@@ -45,7 +58,7 @@ async def registry(args: dict[str, Any], registry_file: str = DEFAULT_REGISTRY) 
 
     if action == "remove":
         agent_name = args.get("agent_name", "")
-        remaining = [a for a in agents if a["name"] != agent_name]
+        remaining = [a for a in agents if a.get("name") != agent_name]
         if len(remaining) == len(agents):
             return {
                 "content": [{"type": "text", "text": f"Agent '{agent_name}' not found in registry."}],
@@ -59,18 +72,37 @@ async def registry(args: dict[str, Any], registry_file: str = DEFAULT_REGISTRY) 
     if action == "list":
         if not agents:
             return {"content": [{"type": "text", "text": "No agents registered yet."}]}
-        lines = [f"- **{a['name']}**: {a['description']} ({len(a['tools'])} tools, {a['status']})" for a in agents]
+        # Read tolerantly — older entries may lack some fields.
+        lines = [
+            f"- **{a.get('name', '?')}**: {a.get('description', '')} "
+            f"({len(a.get('tools', []))} tools, {a.get('status', 'active')})"
+            for a in agents
+        ]
         return {"content": [{"type": "text", "text": "Registered agents:\n" + "\n".join(lines)}]}
 
     if action == "describe":
         agent_name = args.get("agent_name", "")
-        match = next((a for a in agents if a["name"] == agent_name), None)
+        match = next((a for a in agents if a.get("name") == agent_name), None)
         if not match:
             return {
                 "content": [{"type": "text", "text": f"Agent '{agent_name}' not found in registry."}],
                 "is_error": True,
             }
-        details = json.dumps(match, indent=2)
+        # Surface the new SDK-config fields with tolerant defaults so older
+        # entries (written before these fields existed) still describe cleanly.
+        view = {
+            "name": match.get("name", agent_name),
+            "description": match.get("description", ""),
+            "tools": match.get("tools", []),
+            "created": match.get("created"),
+            "updated_at": match.get("updated_at", match.get("created")),
+            "path": match.get("path", f"output/{agent_name}/"),
+            "status": match.get("status", "active"),
+            "max_turns": match.get("max_turns"),
+            "max_budget_usd": match.get("max_budget_usd"),
+            "permission_mode": match.get("permission_mode"),
+        }
+        details = json.dumps(view, indent=2)
         return {"content": [{"type": "text", "text": f"Agent details:\n{details}"}]}
 
     return {
@@ -81,7 +113,9 @@ async def registry(args: dict[str, Any], registry_file: str = DEFAULT_REGISTRY) 
 
 registry_tool = tool(
     "registry",
-    "Manage the agent registry. Actions: 'add' (register or update), 'remove' (drop entry), 'list' (show all), 'describe' (show one).",
+    "Manage the agent registry. Actions: 'add' (register or update), 'remove' (drop entry), 'list' (show all), 'describe' (show one). "
+    "'add' accepts optional SDK-config fields: max_turns, max_budget_usd, permission_mode. "
+    "Entries carry 'created' (first seen) and 'updated_at' (last add) ISO dates.",
     {
         "type": "object",
         "properties": {
@@ -89,6 +123,9 @@ registry_tool = tool(
             "agent_name": {"type": "string"},
             "description": {"type": "string"},
             "tools_list": {"type": "array", "items": {"type": "string"}},
+            "max_turns": {"type": "integer"},
+            "max_budget_usd": {"type": "number"},
+            "permission_mode": {"type": "string"},
         },
         "required": ["action"],
     },

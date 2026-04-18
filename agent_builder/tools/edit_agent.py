@@ -14,12 +14,14 @@ iterative "tweak an already-built agent" case. It:
   at scaffold time. If you need those changed, re-scaffold or hand-edit.
 """
 
-from datetime import datetime
+import json
+from datetime import date, datetime
 from pathlib import Path
 from typing import Any
 
 from claude_agent_sdk import tool
 
+from agent_builder.tools.registry import DEFAULT_REGISTRY
 from agent_builder.tools.scaffold import _validate_agent_name
 from agent_builder.tools.write_tools import TOOLS_HEADER
 
@@ -29,6 +31,33 @@ IDENTITY_FILE_MAP = {
     "memory_md": "MEMORY.md",
     "user_md": "USER.md",
 }
+
+
+def _bump_registry_updated_at(agent_name: str, registry_file: str) -> None:
+    """Advance the registry entry's updated_at to today.
+
+    We touch the registry from edit_agent so that 'last modified' tracks
+    real edits (not just initial scaffold). Silent no-op if the agent isn't
+    registered or the registry file is missing/corrupt — edit_agent shouldn't
+    fail a user edit just because the registry is in an odd state.
+    """
+    path = Path(registry_file)
+    if not path.exists():
+        return
+    try:
+        agents = json.loads(path.read_text(encoding="utf-8"))
+    except (json.JSONDecodeError, OSError):
+        return
+    if not isinstance(agents, list):
+        return
+    for entry in agents:
+        if isinstance(entry, dict) and entry.get("name") == agent_name:
+            entry["updated_at"] = date.today().isoformat()
+            try:
+                path.write_text(json.dumps(agents, indent=2), encoding="utf-8")
+            except OSError:
+                return
+            return
 
 
 def _backup(target: Path) -> Path | None:
@@ -41,7 +70,11 @@ def _backup(target: Path) -> Path | None:
     return backup
 
 
-async def edit_agent(args: dict[str, Any], output_base: str = "output") -> dict[str, Any]:
+async def edit_agent(
+    args: dict[str, Any],
+    output_base: str = "output",
+    registry_file: str = DEFAULT_REGISTRY,
+) -> dict[str, Any]:
     agent_name = args["agent_name"]
 
     error = _validate_agent_name(agent_name, output_base)
@@ -89,6 +122,10 @@ async def edit_agent(args: dict[str, Any], output_base: str = "output") -> dict[
         full_content = TOOLS_HEADER + "\n" + tools_code
         target.write_text(full_content, encoding="utf-8")
         applied.append(f"tools.py ({len(full_content)} chars)")
+
+    # Successful edit — bump the registry's updated_at so 'last modified'
+    # tracks real changes. Silent no-op if this agent isn't registered.
+    _bump_registry_updated_at(agent_name, registry_file)
 
     lines = [f"Updated '{agent_name}': {len(applied)} file(s) changed."]
     for line in applied:

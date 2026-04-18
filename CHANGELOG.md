@@ -3,6 +3,19 @@
 All notable changes to this project are documented here.
 Format loosely follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [0.5.0] - 2026-04-18
+
+### Added
+- **`rollback` MCP tool** with `list` and `restore` actions over the `.bak-<timestamp>` files written by `edit_agent` and `propose_self_change`. Restore copies a fresh `.bak-<now>` of the current target before overwriting, so the restore itself is reversible. Path-traversal hardened: target must resolve under the repo root / `agent_builder/` / `output/`; `backup_name` must be a plain basename in the same directory and must match the target's basename (no cross-file restores like `AGENT.md.bak-...` over `tools.py`).
+- **`.env` auto-load in generated agents**. Template now does a guarded `from dotenv import load_dotenv` (no-op fallback if dotenv isn't installed) and calls `load_dotenv(AGENT_DIR / ".env")` first thing in `main()`, before SDK options are built. `python-dotenv>=1.0` moved from dev extras into core dependencies.
+- **`env_example.tmpl` documents the CLI-login fallback** so users know they can leave `ANTHROPIC_API_KEY=` empty and lean on `claude login` subscription auth.
+- **Registry schema extension**: `add` now accepts `max_turns`, `max_budget_usd`, `permission_mode` (all optional, all preserved across partial-update calls). Every entry carries an `updated_at` ISO date alongside `created`. `describe` surfaces all of these. `edit_agent` bumps `updated_at` on a successful edit (silent no-op if the agent isn't registered).
+- **Template `build_claude_md` regression coverage** — the inlined copy in `agent_main.py.tmpl` is now exercised against the same scenarios as the `agent_builder/utils.py` version (header write, required-section content, optional USER.md, raises on missing AGENT.md).
+- **README** mentions `python -m agent_builder.builder --help` so all CLI flags are discoverable in one line.
+
+### Changed
+- **AGENT.md Phase 4 partial-failure recovery** is now a single branched question (`A) clean up + restart  B) repair in place  C) abandon`) instead of two sequential confirmations. One round-trip, one decision.
+
 ## [0.4.1] - 2026-04-18
 
 ### Added

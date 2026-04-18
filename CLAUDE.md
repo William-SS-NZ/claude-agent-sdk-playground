@@ -43,7 +43,7 @@ Every agent (the builder itself and every generated agent) is defined by four ma
 
 ### Builder tools (MCP server)
 
-`agent_builder/tools/__init__.py` assembles one in-process SDK MCP server (`builder_tools_server`) from eight tools. Each is a `@tool`-decorated async function wired via `create_sdk_mcp_server`. All return MCP shape `{"content": [{"type": "text", "text": ...}], "is_error"?: bool}`:
+`agent_builder/tools/__init__.py` assembles one in-process SDK MCP server (`builder_tools_server`) from nine tools. Each is a `@tool`-decorated async function wired via `create_sdk_mcp_server`. All return MCP shape `{"content": [{"type": "text", "text": ...}], "is_error"?: bool}`:
 
 - `scaffold_agent` — validates name against `^[a-z0-9][a-z0-9-]*$` + path-traversal guard, creates `output/<name>/` with `agent.py` (from `templates/agent_main.py.tmpl`), `.env.example`, `.gitignore`. Accepts `tools_list`, `allowed_tools_list`, `permission_mode` so the generated `agent.py` is valid Python with no unfilled placeholders.
 - `write_identity` — writes `AGENT.md`/`SOUL.md`/`MEMORY.md`/`USER.md` into the agent dir
@@ -52,7 +52,8 @@ Every agent (the builder itself and every generated agent) is defined by four ma
 - `registry` — `add` (upserts by name), `remove`, `list`, `describe` against `agent_builder/registry/agents.json`
 - `remove_agent` — safely deletes `output/<name>/` via `shutil.rmtree` and drops the registry entry in one call. Same validation as `scaffold_agent`; refuses anything resolving outside `output_base`.
 - `edit_agent` — update an existing agent's identity files or `tools.py` in place. Supplied fields replace; omitted fields are left alone. Every overwritten file gets a `.bak-<timestamp>`. `tools_code` gets the canonical `TOOLS_HEADER` prepended same as `write_tools`. Does NOT touch `agent.py`, `.env.example`, or `.gitignore` — those are scaffold-time artifacts.
-- `propose_self_change` — **self-heal**. The builder can edit its own identity/tools/template/utils when it observes a workflow failure, but only after a hard stdin confirmation. Scope is whitelisted (`identity/`, `tools/`, `templates/`, `utils.py`, `builder.py`); `registry/agents.json`, `output/`, and anything outside `agent_builder/` are rejected. Writes a `.bak-<timestamp>` backup on every apply and appends to `agent_builder/self-heal.log`. Changes take effect on the next builder session — the current in-process modules are not reloaded.
+- `propose_self_change` — **self-heal**.
+- `rollback` — `list` and `restore` actions over the `.bak-<timestamp>` files left by `edit_agent` and `propose_self_change`. Restore writes a fresh pre-restore backup so it's itself reversible. Refuses cross-file restores (an `AGENT.md.bak-...` cannot be restored over `tools.py`) and standard path-traversal attempts. The builder can edit its own identity/tools/template/utils when it observes a workflow failure, but only after a hard stdin confirmation. Scope is whitelisted (`identity/`, `tools/`, `templates/`, `utils.py`, `builder.py`); `registry/agents.json`, `output/`, and anything outside `agent_builder/` are rejected. Writes a `.bak-<timestamp>` backup on every apply and appends to `agent_builder/self-heal.log`. Changes take effect on the next builder session — the current in-process modules are not reloaded.
 
 Adding a new builder tool: create `agent_builder/tools/<name>.py`, import and register in `tools/__init__.py`, add to `allowed_tools` in `builder.py` as `"mcp__builder_tools__<name>"`.
 
