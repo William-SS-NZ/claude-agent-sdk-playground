@@ -155,7 +155,12 @@ async def test_scaffold_description_with_quotes_is_escaped(tmp_path: Path):
 @pytest.mark.asyncio
 async def test_scaffold_fails_on_unfilled_placeholder(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
     """If the template contains a placeholder scaffold forgot to fill,
-    scaffold must error out rather than write invalid Python."""
+    scaffold must error out rather than write invalid Python.
+
+    We stub the template dir AND the expected-placeholder list so the template
+    only has to declare the placeholders this test cares about — otherwise the
+    new pre-substitution guard would short-circuit with a 'template missing'
+    error before we even get to the unfilled-placeholder branch."""
     import agent_builder.tools.scaffold as scaffold_mod
     fake_template_dir = tmp_path / "templates"
     fake_template_dir.mkdir()
@@ -171,4 +176,73 @@ async def test_scaffold_fails_on_unfilled_placeholder(tmp_path: Path, monkeypatc
         output_base=str(tmp_path / "output"),
     )
     assert result.get("is_error") is True
-    assert "{{missing_placeholder}}" in result["content"][0]["text"]
+    # With the stubbed template the pre-check catches all the placeholders
+    # scaffold normally fills; that's fine — the key property is "scaffold
+    # refused to write invalid Python". Either error message proves that.
+    msg = result["content"][0]["text"]
+    assert "{{missing_placeholder}}" in msg or "{{builder_version}}" in msg
+
+
+@pytest.mark.asyncio
+async def test_scaffold_stamps_builder_version_in_generated_source(tmp_path: Path):
+    """Every generated agent must carry GENERATED_WITH_BUILDER_VERSION so we
+    can trace 'which builder spat this out' when debugging a user's agent."""
+    from agent_builder._version import __version__ as BUILDER_VERSION
+
+    await scaffold_agent(
+        {"agent_name": "stamped", "description": "version stamp test"},
+        output_base=str(tmp_path),
+    )
+    source = (tmp_path / "stamped" / "agent.py").read_text(encoding="utf-8")
+    assert f'GENERATED_WITH_BUILDER_VERSION = "{BUILDER_VERSION}"' in source
+
+
+@pytest.mark.asyncio
+async def test_scaffold_builder_version_placeholder_is_in_survival_set(tmp_path: Path):
+    """Regression: removing {{builder_version}} from the template (or forgetting
+    to fill it in scaffold) must be caught by the pre-substitution guard."""
+    import agent_builder.tools.scaffold as scaffold_mod
+    fake_template_dir = tmp_path / "templates"
+    fake_template_dir.mkdir()
+    # Template deliberately omits {{builder_version}} — scaffold should reject it.
+    (fake_template_dir / "agent_main.py.tmpl").write_text(
+        'AGENT_NAME = "{{agent_name}}"\n',
+        encoding="utf-8",
+    )
+    (fake_template_dir / "env_example.tmpl").write_text("ANTHROPIC_API_KEY=", encoding="utf-8")
+    import pytest as _pytest
+    with _pytest.MonkeyPatch().context() as mp:
+        mp.setattr(scaffold_mod, "TEMPLATES_DIR", fake_template_dir)
+        result = await scaffold_agent(
+            {"agent_name": "missing-version", "description": "x"},
+            output_base=str(tmp_path / "output"),
+        )
+    assert result.get("is_error") is True
+    assert "{{builder_version}}" in result["content"][0]["text"]
+
+
+@pytest.mark.asyncio
+async def test_scaffold_cli_mode_emits_spec_format_epilog(tmp_path: Path):
+    """When cli_mode is on, --help should explain the --spec JSON shapes.
+    The epilog is rendered via RawTextHelpFormatter so newlines survive."""
+    await scaffold_agent(
+        {"agent_name": "epilog-on", "description": "demo"},
+        output_base=str(tmp_path),
+    )
+    source = (tmp_path / "epilog-on" / "agent.py").read_text(encoding="utf-8")
+    assert "SPEC FORMAT:" in source
+    assert '"prompt": "single prompt"' in source
+    assert '"prompts":' in source
+    assert "argparse.RawTextHelpFormatter" in source
+
+
+@pytest.mark.asyncio
+async def test_scaffold_cli_mode_false_omits_spec_format_epilog(tmp_path: Path):
+    """Chat-only agents have no --spec flag, so the epilog should be None."""
+    await scaffold_agent(
+        {"agent_name": "epilog-off", "description": "demo", "cli_mode": False},
+        output_base=str(tmp_path),
+    )
+    source = (tmp_path / "epilog-off" / "agent.py").read_text(encoding="utf-8")
+    assert "SPEC FORMAT:" not in source
+    assert "epilog=None" in source

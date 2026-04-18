@@ -28,6 +28,7 @@ from claude_agent_sdk import (
 )
 
 AGENT_NAME = "{{agent_name}}"
+GENERATED_WITH_BUILDER_VERSION = "{{builder_version}}"
 AGENT_DIR = Path(__file__).parent.resolve()
 LOG_PATH = AGENT_DIR / f"{AGENT_NAME}.log"
 
@@ -339,6 +340,8 @@ async def main():
 
     parser = argparse.ArgumentParser(
         description="{{agent_description}}",
+        formatter_class=argparse.RawTextHelpFormatter,
+        epilog={{cli_help_epilog}},
     )
     parser.add_argument("-v", "--verbose", action="store_true", help="Show debug output")
 {{cli_args_block}}

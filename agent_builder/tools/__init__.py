@@ -2,6 +2,7 @@
 
 from claude_agent_sdk import create_sdk_mcp_server
 
+from agent_builder._version import __version__
 from agent_builder.tools.scaffold import scaffold_agent_tool
 from agent_builder.tools.write_identity import write_identity_tool
 from agent_builder.tools.write_tools import write_tools_tool
@@ -14,7 +15,7 @@ from agent_builder.tools.rollback import rollback_tool
 
 builder_tools_server = create_sdk_mcp_server(
     name="builder_tools",
-    version="1.0.0",
+    version=__version__,
     tools=[
         scaffold_agent_tool,
         write_identity_tool,

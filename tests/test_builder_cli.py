@@ -134,3 +134,23 @@ def test_expand_menu_choice_strips_whitespace():
 def test_expand_menu_choice_returns_none_for_unknown_number():
     assert builder_mod._expand_menu_choice("99") is None
     assert builder_mod._expand_menu_choice("0") is None
+
+
+def test_registered_agent_names_empty_when_registry_missing(tmp_path: Path, monkeypatch):
+    """Short-circuit for menu options 2-6 relies on this returning []."""
+    monkeypatch.setattr(builder_mod, "_REGISTRY_PATH", str(tmp_path / "nope.json"))
+    assert builder_mod._registered_agent_names() == []
+
+
+def test_registered_agent_names_reads_registered(tmp_path: Path, monkeypatch):
+    p = tmp_path / "agents.json"
+    p.write_text('[{"name": "alpha"}, {"name": "beta"}]', encoding="utf-8")
+    monkeypatch.setattr(builder_mod, "_REGISTRY_PATH", str(p))
+    assert builder_mod._registered_agent_names() == ["alpha", "beta"]
+
+
+def test_registered_agent_names_tolerates_corrupt_registry(tmp_path: Path, monkeypatch):
+    p = tmp_path / "agents.json"
+    p.write_text("{not valid json", encoding="utf-8")
+    monkeypatch.setattr(builder_mod, "_REGISTRY_PATH", str(p))
+    assert builder_mod._registered_agent_names() == []

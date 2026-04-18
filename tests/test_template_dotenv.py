@@ -16,6 +16,7 @@ def _render_template() -> str:
         template
         .replace("{{agent_name}}", "dotenv-test")
         .replace("{{agent_description}}", "dotenv test agent")
+        .replace("{{builder_version}}", "test-0.0.0")
         .replace("{{tools_list}}", repr(["Read", "Edit"]))
         .replace("{{allowed_tools_list}}", repr(["Read", "Edit", "mcp__agent_tools__foo"]))
         .replace("{{permission_mode}}", "acceptEdits")
@@ -23,6 +24,7 @@ def _render_template() -> str:
         .replace("{{max_budget_usd}}", "1.00")
         .replace("{{cli_args_block}}", "")
         .replace("{{cli_dispatch_block}}", "")
+        .replace("{{cli_help_epilog}}", "None")
     )
 
 

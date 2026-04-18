@@ -3,6 +3,22 @@
 All notable changes to this project are documented here.
 Format loosely follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [0.7.0] - 2026-04-19
+
+### Added
+- **`--sweep`** (with optional `--older-than DAYS`, default 7): deletes `.bak-<timestamp>` files under `agent_builder/` and `output/`, per-run `agent_builder/logs/builder-<timestamp>.log` files, and `screenshots/` at the repo root. Dry-run summary first, confirmation prompt unless `--yes`. `screenshots/` is only wiped when every file inside is older than the cutoff so a recent screenshot never disappears.
+- **`--doctor`**: read-only health audit. Checks registry JSON parses, every registered agent has its `output/<name>/` dir with all required files, `output/<name>/` dirs without a registry entry warn, builder's own identity files exist, template has every expected placeholder (drift guard), no generated `agent.py` still carries `{{...}}` placeholders. Exit 0 when no FAIL, 1 otherwise. WARNs don't fail exit.
+- **`agent_builder/_version.py`** — single source of truth for the builder version via `importlib.metadata.version("claude-agent-sdk-playground")`, with `"unknown"` fallback so source-only checkouts don't crash. Builder's MCP server and generated `GENERATED_WITH_BUILDER_VERSION` stamp read from this. Replaces two hardcoded `version="1.0.0"` drifts in `agent_builder/tools/__init__.py` and `write_tools.py` `EMPTY_TOOLS_BODY` (the latter stamps a stable `"0.1.0"` with a comment explaining generated agents have their own lifecycle).
+- **`GENERATED_WITH_BUILDER_VERSION`** constant stamped into every generated `agent.py` so future tooling can detect and warn on regens from incompatible builder versions.
+- **Spec-file-format epilog** on generated agents' `--help` (when `cli_mode=True`). Uses argparse's `RawTextHelpFormatter` to preserve newlines. Describes the three accepted JSON shapes for `-s/--spec`.
+- **Template drift guard** in `scaffold_agent` — asserts every expected `{{...}}` placeholder exists in the template before rendering. Fails loudly if a future edit to `agent_main.py.tmpl` removes a line scaffold depends on.
+- **Menu registry-empty short-circuit** — picking menu options 2-6 (edit / test / list / remove / rollback) when the registry has no agents skips the LLM round-trip and prints a direct "build something first" message.
+- **AST-based cli-dispatch regression test** (`tests/test_cli_dispatch_wiring.py`). 6 tests verify that a `cli_mode=True` scaffolded `agent.py` actually wires `ClaudeSDKClient` → `client.query()` → `await _drain_responses(...)` → `return` in the right order before the chat loop, and that `cli_mode=False` leaves no `args.prompt` / `args.spec` / `cli_prompts` references anywhere. Catches "dev refactored `_drain_responses` and broke the CLI branch" regressions without burning API calls.
+- **`TODO.md`** — long-form roadmap for outstanding polish, deferred-by-design trade-offs, and high-priority items not yet scheduled.
+
+### Verified
+- CI green across Python 3.10 / 3.11 / 3.12 for v0.4.x through v0.6.0 (confirmed 2026-04-19).
+
 ## [0.6.0] - 2026-04-19
 
 ### Added

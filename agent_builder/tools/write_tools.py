@@ -19,9 +19,12 @@ TEST_MODE = False
 EMPTY_TOOLS_BODY = '''\
 # This agent defines no custom tools. tools_server is intentionally empty
 # so the generated agent.py can still `from tools import tools_server`.
+# Generated agents are independent artifacts with their own lifecycle, so we
+# stamp a stable "0.1.0" starting point rather than inheriting the builder's
+# version — bumping the builder shouldn't churn every downstream agent.
 tools_server = create_sdk_mcp_server(
     name="agent-tools",
-    version="1.0.0",
+    version="0.1.0",
     tools=[],
 )
 '''

@@ -6,6 +6,8 @@ from typing import Any
 
 from claude_agent_sdk import tool
 
+from agent_builder import _version as _builder_version
+
 TEMPLATES_DIR = Path(__file__).parent.parent / "templates"
 
 NAME_PATTERN = re.compile(r"^[a-z0-9][a-z0-9-]*$")
@@ -31,6 +33,19 @@ _CLI_ARGS_BLOCK = '''\
         "-s", "--spec",
         help="Non-interactive: JSON file with {'prompt': '...'} or {'prompts': [...]}.",
     )'''
+
+
+# Inserted into agent_main.py.tmpl as the argparse epilog when cli_mode=True.
+# Describes the JSON shapes accepted by --spec. Rendered with RawTextHelpFormatter
+# so the newlines survive to --help output. When cli_mode=False we emit None
+# (no epilog needed — there's no --spec flag).
+_CLI_HELP_EPILOG = (
+    "SPEC FORMAT:\n"
+    "  JSON file with one of these shapes:\n"
+    "    {\"prompt\": \"single prompt\"}\n"
+    "    {\"prompts\": [\"prompt 1\", \"prompt 2\"]}\n"
+    "    \"a bare string is also fine\"\n"
+)
 
 
 # Inserted into agent_main.py.tmpl when scaffold is called with cli_mode=True.
@@ -105,8 +120,40 @@ async def scaffold_agent(args: dict[str, Any], output_base: str = "output") -> d
     # Render agent_main.py template
     template_path = TEMPLATES_DIR / "agent_main.py.tmpl"
     template = template_path.read_text(encoding="utf-8")
+
+    # Fail loudly if the template is missing any placeholder scaffold expects
+    # to fill — catches the "someone deleted the line and we silently stopped
+    # stamping the version" class of bug. Every entry here must appear in both
+    # the template and in the .replace() chain below.
+    _REQUIRED_PLACEHOLDERS = (
+        "{{agent_name}}",
+        "{{agent_description}}",
+        "{{builder_version}}",
+        "{{tools_list}}",
+        "{{allowed_tools_list}}",
+        "{{permission_mode}}",
+        "{{max_turns}}",
+        "{{max_budget_usd}}",
+        "{{cli_args_block}}",
+        "{{cli_dispatch_block}}",
+        "{{cli_help_epilog}}",
+    )
+    missing_in_template = [p for p in _REQUIRED_PLACEHOLDERS if p not in template]
+    if missing_in_template:
+        return {
+            "content": [{"type": "text", "text": (
+                f"Template is missing expected placeholders: {missing_in_template}. "
+                "This is a builder bug — update agent_main.py.tmpl."
+            )}],
+            "is_error": True,
+        }
+
     cli_args_block = _CLI_ARGS_BLOCK if cli_mode else ""
     cli_dispatch_block = _CLI_DISPATCH_BLOCK if cli_mode else ""
+    # When cli_mode is off there's no --spec to describe; emit None so argparse
+    # skips the epilog section entirely. repr() gives us a valid Python literal
+    # (triple-quoted / escaped) for either branch.
+    cli_help_epilog = repr(_CLI_HELP_EPILOG) if cli_mode else "None"
 
     # Description is for argparse --help, so escape any quotes
     description_for_help = (description or f"{agent_name} agent").replace('"', '\\"')
@@ -115,6 +162,7 @@ async def scaffold_agent(args: dict[str, Any], output_base: str = "output") -> d
         template
         .replace("{{agent_name}}", agent_name)
         .replace("{{agent_description}}", description_for_help)
+        .replace("{{builder_version}}", _builder_version.__version__)
         .replace("{{tools_list}}", repr(list(tools_list)))
         .replace("{{allowed_tools_list}}", repr(list(allowed_tools_list)))
         .replace("{{permission_mode}}", permission_mode)
@@ -122,6 +170,7 @@ async def scaffold_agent(args: dict[str, Any], output_base: str = "output") -> d
         .replace("{{max_budget_usd}}", f"{max_budget_usd:.2f}")
         .replace("{{cli_args_block}}", cli_args_block)
         .replace("{{cli_dispatch_block}}", cli_dispatch_block)
+        .replace("{{cli_help_epilog}}", cli_help_epilog)
     )
 
     # Fail loudly if any placeholder survived — the generated agent.py would

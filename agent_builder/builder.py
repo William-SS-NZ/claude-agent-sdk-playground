@@ -45,6 +45,8 @@ from agent_builder.utils import Spinner, build_claude_md, format_tool_call
 from agent_builder.tools import builder_tools_server
 from agent_builder.tools.remove_agent import remove_agent as _remove_agent_fn
 from agent_builder.tools.registry import DEFAULT_REGISTRY as _REGISTRY_PATH
+from agent_builder.cleanup import sweep_artifacts, format_summary as _format_sweep_summary
+from agent_builder.doctor import run_health_check, format_checks as _format_doctor_checks
 
 
 class _NullCtx:
@@ -55,6 +57,7 @@ class _NullCtx:
 BUILDER_DIR = Path(__file__).parent.resolve()
 IDENTITY_DIR = BUILDER_DIR / "identity"
 LOGS_DIR = BUILDER_DIR / "logs"
+REPO_ROOT = BUILDER_DIR.parent
 
 
 def _setup_run_logger() -> tuple[logging.Logger, Path]:
@@ -312,6 +315,18 @@ async def _interactive_loop(
             continue
 
         seed = _expand_menu_choice(stripped)
+        # Menu choices 2, 3, 4, 5, 6 all operate on existing registered agents.
+        # If the registry is empty, spending an LLM roundtrip just to be told
+        # "there are no agents" is wasted money — short-circuit locally.
+        if seed is not None and stripped in ("2", "3", "4", "5", "6"):
+            if not _registered_agent_names():
+                if logger:
+                    logger.info("menu choice %s short-circuited — registry empty", stripped)
+                print(
+                    "\n  No agents registered yet — that action needs at least one built agent.\n"
+                    "  Pick option 1 to build your first agent, or type 'menu' to pick again.\n"
+                )
+                continue
         prompt_to_send = seed if seed is not None else user_input
         if seed is not None and logger:
             logger.info("menu choice %s expanded to seed prompt", stripped)
@@ -410,6 +425,43 @@ async def _cli_purge_all(yes: bool) -> int:
     return await _cli_remove(names, yes)
 
 
+def _cli_sweep(older_than_days: int, yes: bool) -> int:
+    """Dry-run summary, prompt for confirmation, then delete. No SDK, no cost."""
+    summary = sweep_artifacts(REPO_ROOT, older_than_days=older_than_days, dry_run=True)
+
+    nothing_found = (
+        not summary["bak_files"]
+        and not summary["builder_logs"]
+        and summary["screenshots"] is None
+    )
+    if nothing_found:
+        print(f"Nothing to sweep (older than {older_than_days} days).")
+        return 0
+
+    print(_format_sweep_summary(summary))
+
+    if not yes:
+        if not _confirm("Proceed with delete? [y/N]: "):
+            print("Aborted.")
+            return 1
+
+    sweep_artifacts(REPO_ROOT, older_than_days=older_than_days, dry_run=False)
+    print("Swept.")
+    return 0
+
+
+def _cli_doctor() -> int:
+    """Run the read-only health audit. No SDK, no cost."""
+    checks, exit_code = run_health_check(REPO_ROOT, registry_file=_REGISTRY_PATH)
+    print(_format_doctor_checks(checks))
+    if exit_code == 0:
+        print("\nHealth check: OK")
+    else:
+        fail_count = sum(1 for c in checks if c["status"] == "FAIL")
+        print(f"\nHealth check: {fail_count} FAIL")
+    return exit_code
+
+
 async def main() -> None:
     parser = argparse.ArgumentParser(
         description="Agent Builder — create agents through conversation",
@@ -437,16 +489,47 @@ async def main() -> None:
     parser.add_argument(
         "-y", "--yes",
         action="store_true",
-        help="Skip confirmation prompts for destructive operations (--remove / --purge-all).",
+        help="Skip confirmation prompts for destructive operations (--remove / --purge-all / --sweep).",
+    )
+    parser.add_argument(
+        "--sweep",
+        action="store_true",
+        help="Delete stale artifacts (.bak-<ts> files, per-run builder logs, screenshots/). "
+             "Prints a dry-run summary and prompts unless --yes. No SDK / no cost.",
+    )
+    parser.add_argument(
+        "--older-than",
+        type=int,
+        default=7,
+        metavar="DAYS",
+        help="For --sweep, preserve artifacts newer than this many days (default 7).",
+    )
+    parser.add_argument(
+        "--doctor",
+        action="store_true",
+        help="Run a read-only health audit (registry, agent dirs, template drift). "
+             "Exits 1 if any FAIL. No SDK / no cost.",
     )
     args = parser.parse_args()
 
-    # Direct CLI actions that skip the SDK entirely
+    # Direct CLI actions that skip the SDK entirely. All mutually exclusive
+    # with each other and with --prompt / --spec.
+    direct_flags = sum([
+        bool(args.remove),
+        bool(args.purge_all),
+        bool(args.sweep),
+        bool(args.doctor),
+    ])
+    if direct_flags > 1:
+        parser.error("--remove / --purge-all / --sweep / --doctor are mutually exclusive")
+    if direct_flags and (args.prompt or args.spec):
+        parser.error("--remove / --purge-all / --sweep / --doctor cannot be combined with --prompt / --spec")
+
+    if args.doctor:
+        sys.exit(_cli_doctor())
+    if args.sweep:
+        sys.exit(_cli_sweep(args.older_than, args.yes))
     if args.remove or args.purge_all:
-        if args.prompt or args.spec:
-            parser.error("--remove / --purge-all cannot be combined with --prompt / --spec")
-        if args.remove and args.purge_all:
-            parser.error("use --remove or --purge-all, not both")
         if args.purge_all:
             sys.exit(await _cli_purge_all(args.yes))
         sys.exit(await _cli_remove(args.remove, args.yes))
