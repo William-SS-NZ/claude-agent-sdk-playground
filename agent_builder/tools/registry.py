@@ -9,8 +9,29 @@ from claude_agent_sdk import tool
 
 DEFAULT_REGISTRY = str(Path(__file__).parent.parent / "registry" / "agents.json")
 
+REQUIRED_AGENT_FILES = ("agent.py", "tools.py", "AGENT.md", "SOUL.md", "MEMORY.md")
 
-async def registry(args: dict[str, Any], registry_file: str = DEFAULT_REGISTRY) -> dict[str, Any]:
+
+def _verify_agent_complete(agent_name: str, output_base: str = "output") -> list[str]:
+    """Return the list of required files missing from output/<agent_name>/.
+
+    Empty list = build is complete. Used by `registry add` to refuse sealing
+    a half-built agent (e.g. write_tools was skipped, so tools.py is missing
+    and `python output/<name>/agent.py` would fail with ModuleNotFoundError
+    on first run).
+    """
+    agent_dir = Path(output_base) / agent_name
+    if not agent_dir.exists():
+        return list(REQUIRED_AGENT_FILES)
+    return [f for f in REQUIRED_AGENT_FILES if not (agent_dir / f).exists()]
+
+
+async def registry(
+    args: dict[str, Any],
+    registry_file: str = DEFAULT_REGISTRY,
+    output_base: str = "output",
+    skip_validation: bool = False,
+) -> dict[str, Any]:
     """Manage the agent registry (add, list, describe)."""
     path = Path(registry_file)
     if not path.exists():
@@ -22,6 +43,21 @@ async def registry(args: dict[str, Any], registry_file: str = DEFAULT_REGISTRY) 
 
     if action == "add":
         agent_name = args.get("agent_name", "")
+        # Refuse to seal a half-built agent — the model has skipped a Phase 4
+        # tool. Returning is_error with the specific missing files lets the
+        # model self-correct (call write_tools, write_identity, etc.) instead
+        # of silently producing a broken agent. skip_validation is an internal
+        # test-only escape hatch (not in the MCP schema, so the LLM can't pass it).
+        missing = [] if skip_validation else _verify_agent_complete(agent_name, output_base)
+        if missing:
+            return {
+                "content": [{"type": "text", "text": (
+                    f"Refusing to register '{agent_name}' — incomplete build. "
+                    f"Missing required files: {missing}. "
+                    "Call the appropriate Phase 4 tool to create them, then re-run registry add."
+                )}],
+                "is_error": True,
+            }
         today = date.today().isoformat()
         entry = {
             "name": agent_name,

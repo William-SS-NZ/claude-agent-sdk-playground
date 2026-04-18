@@ -58,3 +58,51 @@ async def test_write_tools_errors_on_missing_dir(tmp_path: Path):
         output_base=str(tmp_path),
     )
     assert result.get("is_error") is True
+
+
+@pytest.mark.asyncio
+async def test_write_tools_empty_emits_stub(tmp_path: Path):
+    """Agents with no custom tools still need a tools.py whose tools_server
+    is a valid (empty) MCP server, otherwise agent.py crashes with
+    ModuleNotFoundError on first run."""
+    agent_dir = tmp_path / "test-agent"
+    agent_dir.mkdir()
+
+    result = await write_tools(
+        {"agent_name": "test-agent", "tools_code": ""},
+        output_base=str(tmp_path),
+    )
+
+    assert "is_error" not in result
+    assert "empty stub" in result["content"][0]["text"]
+    content = (agent_dir / "tools.py").read_text(encoding="utf-8")
+    assert "tools_server = create_sdk_mcp_server" in content
+    assert "tools=[]" in content
+
+
+@pytest.mark.asyncio
+async def test_write_tools_whitespace_only_treated_as_empty(tmp_path: Path):
+    agent_dir = tmp_path / "test-agent"
+    agent_dir.mkdir()
+
+    result = await write_tools(
+        {"agent_name": "test-agent", "tools_code": "   \n\n   "},
+        output_base=str(tmp_path),
+    )
+
+    assert "is_error" not in result
+    assert "empty stub" in result["content"][0]["text"]
+
+
+@pytest.mark.asyncio
+async def test_write_tools_missing_tools_code_treated_as_empty(tmp_path: Path):
+    agent_dir = tmp_path / "test-agent"
+    agent_dir.mkdir()
+
+    result = await write_tools(
+        {"agent_name": "test-agent"},
+        output_base=str(tmp_path),
+    )
+
+    assert "is_error" not in result
+    assert "empty stub" in result["content"][0]["text"]

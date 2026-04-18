@@ -3,6 +3,18 @@
 All notable changes to this project are documented here.
 Format loosely follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [0.5.1] - 2026-04-18
+
+### Fixed
+- **`ModuleNotFoundError: No module named 'tools'` on first run of generated agents.** The model could call `scaffold_agent` + `write_identity` + `registry add` while skipping `write_tools` (especially for read-only agents that "don't need custom tools"). The generated `agent.py` always does `from tools import tools_server`, so this produced silent half-built agents that crashed at runtime. Three coordinated fixes close the gap:
+  - `registry add` now validates the agent directory before sealing the build. If any of `agent.py`, `tools.py`, `AGENT.md`, `SOUL.md`, `MEMORY.md` is missing, it returns `is_error` listing exactly what's gone, so the model can self-correct by re-running the missing tool. Internal `skip_validation` kwarg available for unit tests (not exposed via the MCP schema).
+  - `write_tools` now accepts an empty / whitespace-only / missing `tools_code` and emits a no-op `tools_server = create_sdk_mcp_server(name="agent-tools", version="1.0.0", tools=[])` stub so agents that genuinely need no custom tools still produce a valid `tools.py`.
+  - `AGENT.md` Phase 4 hardened: all four Phase 4 tools are mandatory (call `write_tools` with empty `tools_code` if no custom tools), and any `is_error` from any Phase 4 tool MUST stop the chain rather than silently proceed.
+
+### Added
+- **`test_agent` now handles agents with no custom tools.** It introspects the loaded `tools_server` and, when it finds zero registered tools, drops the "must call at least one custom tool" pass criterion and broadens `allowed_tools` to the built-in Read/Glob/Grep/Edit/Write/Bash so a read-only agent (e.g. a markdown summariser) can still do meaningful work in the test. AGENT.md now tells the builder to always run `test_agent`, even for empty-tools agents — this catches CLAUDE.md generation, identity-file, and prompt-following bugs that would otherwise surface only at runtime.
+- 7 new tests: `write_tools` empty/whitespace/missing `tools_code` cases (3), build-completeness validator (4).
+
 ## [0.5.0] - 2026-04-18
 
 ### Added

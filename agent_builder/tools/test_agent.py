@@ -52,6 +52,31 @@ def _load_tools_server(tools_py_path: Path) -> Any:
     return module.tools_server
 
 
+def _count_custom_tools(tools_server: Any) -> int:
+    """Best-effort count of how many tools an SDK MCP server exposes.
+
+    The SDK's create_sdk_mcp_server returns a server whose internals vary
+    across versions; we try a few common attributes and fall back to 0.
+    """
+    for attr in ("tools", "_tools", "registered_tools"):
+        value = getattr(tools_server, attr, None)
+        if value is not None:
+            try:
+                return len(value)
+            except TypeError:
+                continue
+    instance = getattr(tools_server, "instance", None)
+    if instance is not None:
+        for attr in ("tools", "_tools"):
+            value = getattr(instance, attr, None)
+            if value is not None:
+                try:
+                    return len(value)
+                except TypeError:
+                    continue
+    return 0
+
+
 def _truncate(s: str, limit: int = 240) -> str:
     s = " ".join(str(s).split())
     return s if len(s) <= limit else s[: limit - 1] + "..."
@@ -83,6 +108,7 @@ async def _run_one_prompt(
     options: ClaudeAgentOptions,
     expected_tools: list[str] | None,
     logger: logging.Logger,
+    require_custom_tool_call: bool = True,
 ) -> dict[str, Any]:
     """Run a single test prompt and collect structured evidence."""
     started = time.monotonic()
@@ -149,9 +175,10 @@ async def _run_one_prompt(
     if first_error:
         reasons.append(f"assistant_error={_truncate(first_error, 80)}")
 
-    mcp_calls = [t for t in tools_called if t not in ("Read", "Write", "Edit", "Bash", "Glob", "Grep")]
-    if not mcp_calls:
-        reasons.append("no custom-tool calls observed")
+    if require_custom_tool_call:
+        mcp_calls = [t for t in tools_called if t not in ("Read", "Write", "Edit", "Bash", "Glob", "Grep")]
+        if not mcp_calls:
+            reasons.append("no custom-tool calls observed")
 
     if expected_tools:
         missing = [t for t in expected_tools if t not in tools_called]
@@ -221,17 +248,32 @@ async def test_agent(args: dict[str, Any], output_base: str = "output") -> dict[
                 "is_error": True,
             }
 
+        # Detect "no custom tools" agents (e.g. read-only summarisers that use
+        # only built-in Read/Glob/Grep). For these, drop the
+        # "must call at least one custom tool" pass criterion and broaden
+        # allowed_tools so the agent can actually use the built-ins.
+        custom_tool_count = _count_custom_tools(tools_server)
+        has_custom_tools = custom_tool_count > 0
+        if has_custom_tools:
+            allowed = ["mcp__agent_tools__*"]
+        else:
+            allowed = ["Read", "Glob", "Grep", "Edit", "Write", "Bash"]
+            logger.info("agent has no custom tools — relaxed pass criterion + built-in allowed_tools")
+
         options = ClaudeAgentOptions(
             setting_sources=["project"],
             cwd=str(agent_dir),
             mcp_servers={"agent_tools": tools_server},
-            allowed_tools=["mcp__agent_tools__*"],
+            allowed_tools=allowed,
             max_turns=max_turns,
         )
 
         results: list[dict[str, Any]] = []
         for prompt, expected in prompts:
-            results.append(await _run_one_prompt(prompt, options, expected, logger))
+            results.append(await _run_one_prompt(
+                prompt, options, expected, logger,
+                require_custom_tool_call=has_custom_tools,
+            ))
 
     finally:
         _set_test_mode(tools_py_path, enabled=False)

@@ -16,9 +16,20 @@ TEST_MODE = False
 '''
 
 
+EMPTY_TOOLS_BODY = '''\
+# This agent defines no custom tools. tools_server is intentionally empty
+# so the generated agent.py can still `from tools import tools_server`.
+tools_server = create_sdk_mcp_server(
+    name="agent-tools",
+    version="1.0.0",
+    tools=[],
+)
+'''
+
+
 async def write_tools(args: dict[str, Any], output_base: str = "output") -> dict[str, Any]:
     agent_name = args["agent_name"]
-    tools_code = args["tools_code"]
+    tools_code = (args.get("tools_code") or "").strip()
     agent_dir = Path(output_base) / agent_name
 
     if not agent_dir.exists():
@@ -27,14 +38,21 @@ async def write_tools(args: dict[str, Any], output_base: str = "output") -> dict
             "is_error": True,
         }
 
-    full_content = TOOLS_HEADER + "\n" + tools_code
+    if not tools_code:
+        body = EMPTY_TOOLS_BODY
+        suffix = " (empty stub — no custom tools)"
+    else:
+        body = tools_code
+        suffix = ""
+
+    full_content = TOOLS_HEADER + "\n" + body
     (agent_dir / "tools.py").write_text(full_content, encoding="utf-8")
 
     return {
         "content": [
             {
                 "type": "text",
-                "text": f"Wrote tools.py for '{agent_name}' ({len(full_content)} chars)",
+                "text": f"Wrote tools.py for '{agent_name}' ({len(full_content)} chars){suffix}",
             }
         ]
     }

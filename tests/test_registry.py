@@ -1,7 +1,18 @@
 import pytest
 import json
 from pathlib import Path
-from agent_builder.tools.registry import registry
+from agent_builder.tools import registry as registry_mod
+from agent_builder.tools.registry import registry, REQUIRED_AGENT_FILES
+
+
+@pytest.fixture(autouse=True)
+def _disable_registry_validation(monkeypatch):
+    """The existing tests in this file exercise registry's bookkeeping in
+    isolation; they don't seed an output/<name>/ dir for every agent. The
+    new `add`-time completeness check is exercised separately in
+    test_registry_validation_*; here we no-op it so legacy tests stay
+    focused on the registry semantics they were written for."""
+    monkeypatch.setattr(registry_mod, "_verify_agent_complete", lambda *_a, **_kw: [])
 
 
 @pytest.fixture
@@ -9,6 +20,34 @@ def registry_path(tmp_path: Path) -> Path:
     path = tmp_path / "agents.json"
     path.write_text("[]", encoding="utf-8")
     return path
+
+
+@pytest.fixture
+def output_base(tmp_path: Path) -> Path:
+    base = tmp_path / "output"
+    base.mkdir()
+    return base
+
+
+def _seed_complete_agent(output_base: Path, name: str) -> Path:
+    """Create the minimum file set registry.add validates against."""
+    agent_dir = output_base / name
+    agent_dir.mkdir()
+    for f in REQUIRED_AGENT_FILES:
+        (agent_dir / f).write_text("# stub", encoding="utf-8")
+    return agent_dir
+
+
+async def _add_complete(registry_path: Path, output_base: Path, **kwargs):
+    """Helper for tests that don't care about validation — seeds files first."""
+    name = kwargs["agent_name"]
+    if not (output_base / name).exists():
+        _seed_complete_agent(output_base, name)
+    return await registry(
+        {"action": "add", **kwargs},
+        registry_file=str(registry_path),
+        output_base=str(output_base),
+    )
 
 
 @pytest.mark.asyncio
@@ -247,3 +286,83 @@ async def test_add_update_preserves_sdk_config_when_not_resupplied(registry_path
     assert data[0]["description"] == "v2"
     assert data[0]["max_turns"] == 99
     assert data[0]["permission_mode"] == "plan"
+
+
+# --- Build-completeness validation tests ---
+# These use the un-monkeypatched validator on purpose, so they bypass the
+# autouse fixture by running validation directly + by passing real dirs.
+
+def test_verify_agent_complete_lists_missing_files(tmp_path: Path, monkeypatch):
+    monkeypatch.undo()  # bypass the module-wide validation no-op
+    base = tmp_path / "output"
+    base.mkdir()
+    (base / "incomplete").mkdir()
+    (base / "incomplete" / "agent.py").write_text("# stub", encoding="utf-8")
+    (base / "incomplete" / "AGENT.md").write_text("# stub", encoding="utf-8")
+
+    missing = registry_mod._verify_agent_complete("incomplete", str(base))
+    assert "tools.py" in missing
+    assert "SOUL.md" in missing
+    assert "MEMORY.md" in missing
+    assert "agent.py" not in missing
+
+
+def test_verify_agent_complete_returns_empty_when_dir_missing_entirely(tmp_path: Path, monkeypatch):
+    monkeypatch.undo()
+    base = tmp_path / "output"
+    base.mkdir()
+    missing = registry_mod._verify_agent_complete("ghost", str(base))
+    # Whole dir missing = every required file is missing
+    assert set(missing) == set(REQUIRED_AGENT_FILES)
+
+
+@pytest.mark.asyncio
+async def test_add_refuses_incomplete_build(tmp_path: Path, monkeypatch):
+    # Disable the autouse no-op so real validation runs for this test.
+    monkeypatch.undo()
+    base = tmp_path / "output"
+    base.mkdir()
+    (base / "halfbuilt").mkdir()
+    (base / "halfbuilt" / "agent.py").write_text("# stub", encoding="utf-8")
+    (base / "halfbuilt" / "AGENT.md").write_text("# stub", encoding="utf-8")
+    # Missing tools.py, SOUL.md, MEMORY.md
+
+    reg_path = tmp_path / "agents.json"
+    reg_path.write_text("[]", encoding="utf-8")
+
+    result = await registry(
+        {"action": "add", "agent_name": "halfbuilt", "description": "x"},
+        registry_file=str(reg_path),
+        output_base=str(base),
+    )
+
+    assert result.get("is_error") is True
+    text = result["content"][0]["text"]
+    assert "tools.py" in text
+    assert "SOUL.md" in text
+    # Registry not modified
+    assert json.loads(reg_path.read_text(encoding="utf-8")) == []
+
+
+@pytest.mark.asyncio
+async def test_add_accepts_complete_build(tmp_path: Path, monkeypatch):
+    monkeypatch.undo()
+    base = tmp_path / "output"
+    base.mkdir()
+    agent_dir = base / "complete"
+    agent_dir.mkdir()
+    for f in REQUIRED_AGENT_FILES:
+        (agent_dir / f).write_text("# stub", encoding="utf-8")
+
+    reg_path = tmp_path / "agents.json"
+    reg_path.write_text("[]", encoding="utf-8")
+
+    result = await registry(
+        {"action": "add", "agent_name": "complete", "description": "y", "tools_list": ["x"]},
+        registry_file=str(reg_path),
+        output_base=str(base),
+    )
+
+    assert "is_error" not in result
+    data = json.loads(reg_path.read_text(encoding="utf-8"))
+    assert len(data) == 1 and data[0]["name"] == "complete"

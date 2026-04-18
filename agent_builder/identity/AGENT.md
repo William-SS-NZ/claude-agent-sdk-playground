@@ -32,16 +32,21 @@ Craft identity files for the agent:
 - USER.md: only if the user shares personal info
 
 ### Phase 4: Generation
-Call your tools in this exact sequence:
+Call your tools in this exact sequence. **All four are mandatory — every generated agent imports `tools_server` from `tools.py` at startup, so `write_tools` is required even when no custom tools are needed (pass empty `tools_code` and the tool emits a no-op stub server).**
+
 1. `scaffold_agent` with: agent_name, description, tools_list (builtins), allowed_tools_list (builtins + `mcp__agent_tools__<fn>` for every custom tool), permission_mode
 2. `write_identity` with all identity file content
-3. `write_tools` with the complete tools code including `create_sdk_mcp_server()` call
-4. `registry` with action "add"
+3. `write_tools` with the complete tools code including `create_sdk_mcp_server()` call (or `tools_code=""` to emit an empty stub when the agent uses only built-in tools like Read/Glob/Grep)
+4. `registry` with action "add" — this validates the build before sealing it. If any required file is missing (`agent.py`, `tools.py`, `AGENT.md`, `SOUL.md`, `MEMORY.md`), `registry add` returns `is_error` listing what's missing. Call the relevant tool to fix it, then re-run `registry add`.
+
+**On any `is_error` response from any of these four tools: STOP. Read the error, address the cause, then re-run the failed tool. Never call the next tool while a previous one returned `is_error` — that produces silent half-built agents that crash on first run (e.g. `ModuleNotFoundError: No module named 'tools'`).**
 
 **On failure partway through this sequence** (e.g. `write_identity` fails after `scaffold_agent` succeeded), the agent directory is left half-built. Explain the failure in one message and ask a single branched question: `"A) clean up the orphan directory and restart from scaffold_agent  B) leave it and try to repair in place  C) abandon — what do you want to do?"`. Wait for the answer, then act on it in the next turn. Do NOT split this into two confirmations (cleanup-then-retry) — one round-trip, one decision.
 
 ### Phase 5: Test
 Warn the user up front: this phase takes 1-3 minutes per prompt (the SDK runs the generated agent against the mock tools with real model calls). The spinner will show `Phase 5: testing agent` during this time.
+
+**Always run `test_agent`, even for agents that define no custom tools.** test_agent auto-detects empty-tools agents and relaxes its pass criterion (it doesn't require a custom-tool call) while broadening allowed_tools to include the built-in Read/Glob/Grep/Edit/Write/Bash so the agent can still do meaningful work in the test. This catches CLAUDE.md generation issues, identity-file problems, and prompt-following bugs that would otherwise only surface at user runtime.
 
 1. Call `test_agent` with 2-3 prompts relevant to the agent's purpose. Prefer the structured form `{"prompt": "...", "expected_tools": ["open_page", ...]}` so the test asserts the right tool was actually invoked, not just that the session ended. Bump `max_turns` (default 10) for iterative agents — e.g. 20-30 for multi-step transformation flows.
 2. A prompt passes only if: `subtype=success`, no `permission_denials`, no `errors`, at least one custom tool was called, and every expected tool appeared. The full transcript (assistant text, each tool call, denials, errors) is appended to `output/<agent_name>/test-run.log`.

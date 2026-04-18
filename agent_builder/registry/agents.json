@@ -1,1 +1,14 @@
-[]
+[
+  {
+    "name": "ez-read",
+    "description": "Summarizes .md files into a TL;DR and key highlights. Intelligently finds files by fuzzy name or natural language hints.",
+    "tools": [
+      "Read",
+      "Glob",
+      "Grep"
+    ],
+    "created": "2026-04-18",
+    "path": "output/ez-read/",
+    "status": "active"
+  }
+]
