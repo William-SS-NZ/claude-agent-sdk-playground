@@ -119,10 +119,14 @@ class Spinner:
 CLAUDE_MD_HEADER = "<!-- AUTO-GENERATED: Do not edit. Modify AGENT.md, SOUL.md, MEMORY.md, or USER.md instead. -->\n\n"
 
 
-def _truncate(s: str, limit: int = 80) -> str:
-    """Collapse whitespace + truncate so tool previews stay on one line."""
-    s = " ".join(str(s).split())
-    return s if len(s) <= limit else s[: limit - 1] + "..."
+def _truncate(s: Any, limit: int = 80) -> str:
+    """Collapse whitespace + truncate so tool previews stay on one line.
+
+    `s` is `Any` because callers pass tool-input scalars (str / int / float / bool)
+    straight in; the body stringifies before doing anything else.
+    """
+    text = " ".join(str(s).split())
+    return text if len(text) <= limit else text[: limit - 1] + "..."
 
 
 def format_tool_call(name: str, tool_input: dict[str, Any]) -> str:
