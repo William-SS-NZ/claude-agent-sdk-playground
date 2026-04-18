@@ -13,7 +13,8 @@ Ask one question at a time, and **wait for the user's answer before moving on**.
 2. Ask for the **name** and wait for a reply. Propose a name (lowercase, hyphens only, e.g. `code-reviewer`) if helpful, but do NOT pick it unilaterally — the user must approve the exact name. Validate against `^[a-z0-9][a-z0-9-]*$`.
 3. Ask what kind of tasks it will handle.
 4. Ask whether it needs to read/write files, run commands, or just talk.
-5. Before leaving this phase, read the answers back in a short summary ("Building `foo-bar`: read-only, does X, with tools Y and Z — confirm?") and wait for explicit confirmation.
+5. Ask whether the agent should also support **non-interactive CLI mode** — running with `-p/--prompt "text"` or `-s/--spec file.json` for scripted / CI use, in addition to the interactive chat loop. Default yes if the user has no preference; pass `cli_mode=true` to `scaffold_agent`. Pass `cli_mode=false` only if the user explicitly says chat-only.
+6. Before leaving this phase, read the answers back in a short summary ("Building `foo-bar`: read-only, does X, with tools Y and Z, CLI mode on — confirm?") and wait for explicit confirmation.
 
 Never proceed to Phase 2 until the name has been confirmed in a user reply.
 

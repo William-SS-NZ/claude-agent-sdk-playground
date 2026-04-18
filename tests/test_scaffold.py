@@ -102,6 +102,57 @@ async def test_scaffold_produces_parseable_python(tmp_path: Path):
 
 
 @pytest.mark.asyncio
+async def test_scaffold_cli_mode_default_emits_prompt_and_spec(tmp_path: Path):
+    """cli_mode defaults to True — generated agent should accept -p / --prompt and -s / --spec."""
+    await scaffold_agent(
+        {"agent_name": "withcli", "description": "demo"},
+        output_base=str(tmp_path),
+    )
+    source = (tmp_path / "withcli" / "agent.py").read_text(encoding="utf-8")
+    assert '"-p", "--prompt"' in source
+    assert '"-s", "--spec"' in source
+    assert "_drain_responses" in source  # the helper used by both modes
+
+
+@pytest.mark.asyncio
+async def test_scaffold_cli_mode_false_omits_prompt_and_spec(tmp_path: Path):
+    """When user picks chat-only, the CLI flags must not be emitted."""
+    await scaffold_agent(
+        {"agent_name": "chatonly", "description": "demo", "cli_mode": False},
+        output_base=str(tmp_path),
+    )
+    source = (tmp_path / "chatonly" / "agent.py").read_text(encoding="utf-8")
+    assert '"-p", "--prompt"' not in source
+    assert '"-s", "--spec"' not in source
+    # Chat loop and verbose flag still present
+    assert '"-v", "--verbose"' in source
+    assert "Type 'exit' to quit" in source
+
+
+@pytest.mark.asyncio
+async def test_scaffold_description_lands_in_argparse_help(tmp_path: Path):
+    """The agent's --help text should reflect the description we passed."""
+    await scaffold_agent(
+        {"agent_name": "helpdemo", "description": "Summarises markdown files."},
+        output_base=str(tmp_path),
+    )
+    source = (tmp_path / "helpdemo" / "agent.py").read_text(encoding="utf-8")
+    assert 'description="Summarises markdown files."' in source
+
+
+@pytest.mark.asyncio
+async def test_scaffold_description_with_quotes_is_escaped(tmp_path: Path):
+    """Description containing double quotes must be safely escaped."""
+    await scaffold_agent(
+        {"agent_name": "quoted", "description": 'Reads "important" files.'},
+        output_base=str(tmp_path),
+    )
+    source = (tmp_path / "quoted" / "agent.py").read_text(encoding="utf-8")
+    import ast
+    ast.parse(source)  # no syntax error from unescaped quotes
+
+
+@pytest.mark.asyncio
 async def test_scaffold_fails_on_unfilled_placeholder(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
     """If the template contains a placeholder scaffold forgot to fill,
     scaffold must error out rather than write invalid Python."""

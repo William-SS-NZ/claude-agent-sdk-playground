@@ -3,6 +3,19 @@
 All notable changes to this project are documented here.
 Format loosely follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [0.6.0] - 2026-04-19
+
+### Added
+- **Generated agents now ship with non-interactive CLI mode by default.** The template's `argparse` parser includes `-p` / `--prompt "text"` for one-shot prompts and `-s` / `--spec file.json` for batches (same spec shape as the builder: `{"prompt": "..."}`, `{"prompts": [...]}`, or a bare JSON string). When either flag is set the agent runs the prompts and exits before entering the chat loop.
+- **`scaffold_agent` accepts `cli_mode: bool = True`.** AGENT.md Phase 1 instructs the builder to ask the user whether they want this capability or chat-only; pass `cli_mode=false` to omit. Default is true so most builds get the capability without an extra question.
+- **The agent's `--help` text reflects the actual purpose**, not just the agent name. Scaffold passes the user-supplied `description` through as the argparse `description` (with safe quote-escaping). Run `python output/<name>/agent.py --help` to see it.
+- **Short-hand flags everywhere.** Builder gains `-v`/`-p`/`-s`/`-r`/`-P`/`-y` aliases for `--verbose`/`--prompt`/`--spec`/`--remove`/`--purge-all`/`--yes`. Generated agents get `-v` for `--verbose` always, plus `-p` / `-s` when `cli_mode=true`.
+- **`_drain_responses(client, verbose)` helper extracted in the template** so the chat loop and CLI dispatch share one rendering path. Removes ~50 lines of duplication and keeps the two modes identical in output / logging / spinner / cost reporting.
+
+### Tests
+- 4 new scaffold tests covering: cli_mode default emits both flags + helper; cli_mode=False omits them but keeps `--verbose`; description lands in argparse `description`; description with embedded quotes parses cleanly.
+- Pre-existing template-rendering tests updated to substitute the new placeholders.
+
 ## [0.5.4] - 2026-04-19
 
 ### Added

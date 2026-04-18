@@ -19,6 +19,48 @@ CLAUDE.md
 """
 
 
+# Inserted into agent_main.py.tmpl when scaffold is called with cli_mode=True.
+# Adds --prompt / -p and --spec / -s argparse options. Indented to match the
+# template's 4-space indentation inside parser-build.
+_CLI_ARGS_BLOCK = '''\
+    parser.add_argument(
+        "-p", "--prompt",
+        help="Non-interactive: send a single prompt and exit after the response.",
+    )
+    parser.add_argument(
+        "-s", "--spec",
+        help="Non-interactive: JSON file with {'prompt': '...'} or {'prompts': [...]}.",
+    )'''
+
+
+# Inserted into agent_main.py.tmpl when scaffold is called with cli_mode=True.
+# Sits between the ClaudeAgentOptions construction and the chat loop. If the
+# user passed --prompt or --spec, runs those prompts and returns before
+# entering the interactive loop.
+_CLI_DISPATCH_BLOCK = '''\
+    cli_prompts = []
+    if getattr(args, "prompt", None):
+        cli_prompts.append(args.prompt)
+    if getattr(args, "spec", None):
+        import json as _json
+        spec_data = _json.loads(Path(args.spec).read_text(encoding="utf-8"))
+        if isinstance(spec_data, str):
+            cli_prompts.append(spec_data)
+        elif isinstance(spec_data, dict):
+            if "prompts" in spec_data:
+                cli_prompts.extend(spec_data["prompts"])
+            elif "prompt" in spec_data:
+                cli_prompts.append(spec_data["prompt"])
+    if cli_prompts:
+        async with ClaudeSDKClient(options=options) as client:
+            for _p in cli_prompts:
+                logger.info("cli_prompt: %s", _p)
+                await client.query(_p)
+                await _drain_responses(client, verbose)
+        return
+'''
+
+
 def _validate_agent_name(agent_name: str, output_base: str) -> str | None:
     """Validate agent_name and return error message if invalid, None if valid."""
     if not NAME_PATTERN.match(agent_name):
@@ -44,6 +86,7 @@ async def scaffold_agent(args: dict[str, Any], output_base: str = "output") -> d
     permission_mode = args.get("permission_mode", "acceptEdits")
     max_turns = int(args.get("max_turns", 25))
     max_budget_usd = float(args.get("max_budget_usd", 1.00))
+    cli_mode = bool(args.get("cli_mode", True))
 
     error = _validate_agent_name(agent_name, output_base)
     if error:
@@ -62,14 +105,23 @@ async def scaffold_agent(args: dict[str, Any], output_base: str = "output") -> d
     # Render agent_main.py template
     template_path = TEMPLATES_DIR / "agent_main.py.tmpl"
     template = template_path.read_text(encoding="utf-8")
+    cli_args_block = _CLI_ARGS_BLOCK if cli_mode else ""
+    cli_dispatch_block = _CLI_DISPATCH_BLOCK if cli_mode else ""
+
+    # Description is for argparse --help, so escape any quotes
+    description_for_help = (description or f"{agent_name} agent").replace('"', '\\"')
+
     agent_py = (
         template
         .replace("{{agent_name}}", agent_name)
+        .replace("{{agent_description}}", description_for_help)
         .replace("{{tools_list}}", repr(list(tools_list)))
         .replace("{{allowed_tools_list}}", repr(list(allowed_tools_list)))
         .replace("{{permission_mode}}", permission_mode)
         .replace("{{max_turns}}", str(max_turns))
         .replace("{{max_budget_usd}}", f"{max_budget_usd:.2f}")
+        .replace("{{cli_args_block}}", cli_args_block)
+        .replace("{{cli_dispatch_block}}", cli_dispatch_block)
     )
 
     # Fail loudly if any placeholder survived — the generated agent.py would
@@ -113,7 +165,10 @@ scaffold_agent_tool = tool(
     "allowed_tools_list: full allowed list including mcp__agent_tools__* entries. "
     "permission_mode: 'default', 'acceptEdits', 'bypassPermissions', or 'plan'. "
     "max_turns: safety cap on SDK turns per user message (default 25, raise for iterative agents). "
-    "max_budget_usd: per-conversation USD budget cap (default 1.00).",
+    "max_budget_usd: per-conversation USD budget cap (default 1.00). "
+    "cli_mode: when true (default), the generated agent.py also accepts "
+    "-p/--prompt 'text' and -s/--spec file.json for non-interactive runs. "
+    "Set false to ship a chat-only agent.",
     {
         "type": "object",
         "properties": {
@@ -124,6 +179,7 @@ scaffold_agent_tool = tool(
             "permission_mode": {"type": "string"},
             "max_turns": {"type": "integer"},
             "max_budget_usd": {"type": "number"},
+            "cli_mode": {"type": "boolean"},
         },
         "required": ["agent_name", "description"],
     },

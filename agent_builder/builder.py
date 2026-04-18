@@ -414,28 +414,28 @@ async def main() -> None:
     parser = argparse.ArgumentParser(
         description="Agent Builder — create agents through conversation",
     )
-    parser.add_argument("--verbose", action="store_true", help="Show debug output")
+    parser.add_argument("-v", "--verbose", action="store_true", help="Show debug output")
     parser.add_argument(
-        "--prompt",
+        "-p", "--prompt",
         help="Non-interactive mode: send a single prompt and exit after the response.",
     )
     parser.add_argument(
-        "--spec",
+        "-s", "--spec",
         help="Non-interactive mode: JSON file with {'prompt': '...'} or {'prompts': ['...','...']}.",
     )
     parser.add_argument(
-        "--remove",
+        "-r", "--remove",
         action="append",
         metavar="NAME",
         help="Directly remove an agent (output dir + registry entry). Repeatable. No SDK / no cost. Prompts for confirmation unless --yes.",
     )
     parser.add_argument(
-        "--purge-all",
+        "-P", "--purge-all",
         action="store_true",
         help="Remove every agent listed in the registry. Prompts for confirmation unless --yes.",
     )
     parser.add_argument(
-        "--yes",
+        "-y", "--yes",
         action="store_true",
         help="Skip confirmation prompts for destructive operations (--remove / --purge-all).",
     )

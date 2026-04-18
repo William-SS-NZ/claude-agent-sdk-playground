@@ -24,11 +24,14 @@ def _render_template(agent_dir: Path, agent_name: str = "tmpl-test") -> Path:
     rendered = (
         template
         .replace("{{agent_name}}", agent_name)
+        .replace("{{agent_description}}", f"{agent_name} test")
         .replace("{{tools_list}}", repr(["Read"]))
         .replace("{{allowed_tools_list}}", repr(["Read"]))
         .replace("{{permission_mode}}", "acceptEdits")
         .replace("{{max_turns}}", "25")
         .replace("{{max_budget_usd}}", "1.00")
+        .replace("{{cli_args_block}}", "")
+        .replace("{{cli_dispatch_block}}", "")
     )
     assert "{{" not in rendered, "unfilled template placeholders remain"
     agent_py = agent_dir / "agent.py"

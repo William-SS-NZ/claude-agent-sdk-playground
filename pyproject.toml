@@ -1,6 +1,6 @@
 [project]
 name = "claude-agent-sdk-playground"
-version = "0.5.4"
+version = "0.6.0"
 description = "Agent Builder — create, test, and manage purpose-built Claude Agent SDK agents through conversation"
 requires-python = ">=3.10"
 license = { text = "PolyForm-Noncommercial-1.0.0" }

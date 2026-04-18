@@ -15,11 +15,14 @@ def _render_template() -> str:
     return (
         template
         .replace("{{agent_name}}", "dotenv-test")
+        .replace("{{agent_description}}", "dotenv test agent")
         .replace("{{tools_list}}", repr(["Read", "Edit"]))
         .replace("{{allowed_tools_list}}", repr(["Read", "Edit", "mcp__agent_tools__foo"]))
         .replace("{{permission_mode}}", "acceptEdits")
         .replace("{{max_turns}}", "25")
         .replace("{{max_budget_usd}}", "1.00")
+        .replace("{{cli_args_block}}", "")
+        .replace("{{cli_dispatch_block}}", "")
     )
 
 
