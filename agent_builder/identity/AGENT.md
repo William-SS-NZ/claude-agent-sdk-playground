@@ -29,7 +29,7 @@ Craft identity files for the agent:
 
 ### Phase 4: Generation
 Call your tools in this exact sequence:
-1. `scaffold_agent` with the agent name and description
+1. `scaffold_agent` with: agent_name, description, tools_list (builtins), allowed_tools_list (builtins + `mcp__agent_tools__<fn>` for every custom tool), permission_mode
 2. `write_identity` with all identity file content
 3. `write_tools` with the complete tools code including `create_sdk_mcp_server()` call
 4. `registry` with action "add"

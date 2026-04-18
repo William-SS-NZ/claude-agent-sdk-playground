@@ -39,6 +39,9 @@ async def scaffold_agent(args: dict[str, Any], output_base: str = "output") -> d
     """Create directory structure and boilerplate files for a new agent."""
     agent_name = args["agent_name"]
     description = args["description"]
+    tools_list = args.get("tools_list", ["Read", "Glob", "Grep"])
+    allowed_tools_list = args.get("allowed_tools_list", list(tools_list))
+    permission_mode = args.get("permission_mode", "acceptEdits")
 
     error = _validate_agent_name(agent_name, output_base)
     if error:
@@ -57,7 +60,13 @@ async def scaffold_agent(args: dict[str, Any], output_base: str = "output") -> d
     # Render agent_main.py template
     template_path = TEMPLATES_DIR / "agent_main.py.tmpl"
     template = template_path.read_text(encoding="utf-8")
-    agent_py = template.replace("{{agent_name}}", agent_name)
+    agent_py = (
+        template
+        .replace("{{agent_name}}", agent_name)
+        .replace("{{tools_list}}", repr(list(tools_list)))
+        .replace("{{allowed_tools_list}}", repr(list(allowed_tools_list)))
+        .replace("{{permission_mode}}", permission_mode)
+    )
     (agent_dir / "agent.py").write_text(agent_py, encoding="utf-8")
 
     # Render .env.example
@@ -82,6 +91,19 @@ async def scaffold_agent(args: dict[str, Any], output_base: str = "output") -> d
 # MCP tool registration
 scaffold_agent_tool = tool(
     "scaffold_agent",
-    "Create the directory structure and boilerplate files for a new agent",
-    {"agent_name": str, "description": str},
+    "Create the directory structure and boilerplate files for a new agent. "
+    "tools_list: builtin tool names (e.g. ['Read','Edit','Bash']). "
+    "allowed_tools_list: full allowed list including mcp__agent_tools__* entries. "
+    "permission_mode: 'default', 'acceptEdits', 'bypassPermissions', or 'plan'.",
+    {
+        "type": "object",
+        "properties": {
+            "agent_name": {"type": "string"},
+            "description": {"type": "string"},
+            "tools_list": {"type": "array", "items": {"type": "string"}},
+            "allowed_tools_list": {"type": "array", "items": {"type": "string"}},
+            "permission_mode": {"type": "string"},
+        },
+        "required": ["agent_name", "description"],
+    },
 )(scaffold_agent)
