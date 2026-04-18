@@ -95,3 +95,42 @@ def test_web_tools_in_allowed_tools():
     opts = builder_mod._build_options()
     assert "WebFetch" in opts.allowed_tools
     assert "WebSearch" in opts.allowed_tools
+
+
+# --- Menu tests ---
+
+def test_menu_text_lists_all_choices():
+    text = builder_mod._menu_text()
+    for key, (label, _) in builder_mod._MENU_CHOICES.items():
+        assert f"{key}. {label}" in text
+    assert "exit" in text
+    assert "menu" in text
+
+
+def test_expand_menu_choice_returns_seed_for_known_numbers():
+    seed = builder_mod._expand_menu_choice("1")
+    assert seed is not None
+    assert "build" in seed.lower() or "phase 1" in seed.lower()
+
+    seed = builder_mod._expand_menu_choice("5")
+    assert seed is not None
+    assert "remove" in seed.lower()
+
+
+def test_expand_menu_choice_returns_none_for_freeform_input():
+    assert builder_mod._expand_menu_choice("build me a markdown bot") is None
+    assert builder_mod._expand_menu_choice("make a thing") is None
+
+
+def test_expand_menu_choice_returns_none_for_option_7_freeform():
+    """Option 7 is 'something else — I'll describe it', empty seed by design."""
+    assert builder_mod._expand_menu_choice("7") is None
+
+
+def test_expand_menu_choice_strips_whitespace():
+    assert builder_mod._expand_menu_choice("  3  ") is not None
+
+
+def test_expand_menu_choice_returns_none_for_unknown_number():
+    assert builder_mod._expand_menu_choice("99") is None
+    assert builder_mod._expand_menu_choice("0") is None

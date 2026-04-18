@@ -3,6 +3,12 @@
 All notable changes to this project are documented here.
 Format loosely follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [0.5.4] - 2026-04-19
+
+### Added
+- **Interactive menu on launch** of the chat loop. Shows the seven things the builder can do (build new, edit existing, test existing, list/describe registry, remove agent, roll back an edit, free-form) and lets you pick by number. The number expands into a seed prompt that routes the SDK directly to the right phase / tool, saving you from typing the workflow incantation by hand. Type `menu` / `?` / `help` at any prompt to redisplay. Free-form input still works exactly as before — anything that isn't a menu number passes straight through.
+- Menu only fires in interactive mode (`python -m agent_builder.builder`). The non-interactive paths (`--prompt`, `--spec`, `--remove`, `--purge-all`) are untouched, so scripts and CI keep their existing behaviour.
+
 ## [0.5.3] - 2026-04-18
 
 ### Added

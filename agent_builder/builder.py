@@ -226,13 +226,68 @@ async def _run_one_query(
             await spinner.stop()
 
 
+_MENU_CHOICES: dict[str, tuple[str, str]] = {
+    # number → (label, seed prompt sent to the SDK)
+    "1": (
+        "Build a new agent",
+        "I want to build a new agent. Start Phase 1 (Discovery) — ask me about the agent's purpose, propose a name for me to confirm, and walk me through the rest of the workflow.",
+    ),
+    "2": (
+        "Edit an existing agent",
+        "I want to edit an existing agent. First call registry with action 'list' to show me what's registered, then ask which one and what should change.",
+    ),
+    "3": (
+        "Test an existing agent",
+        "I want to run test_agent against an existing agent. List what's registered first, then ask which one and propose 2–3 test prompts for me to confirm.",
+    ),
+    "4": (
+        "List or describe registered agents",
+        "List every agent in the registry (use registry action 'list'), then offer to describe any of them in detail with action 'describe'.",
+    ),
+    "5": (
+        "Remove an agent",
+        "I want to remove an agent. List what's registered first, then confirm the exact name with me before calling remove_agent — output/<name>/ is gitignored so the deletion can't be recovered from git.",
+    ),
+    "6": (
+        "Roll back a recent edit",
+        "I want to roll back a recent edit. Ask which file (under agent_builder/ or output/<name>/), call rollback action 'list' to show available .bak-<timestamp> backups, then confirm which backup_name to restore before calling rollback action 'restore'.",
+    ),
+    "7": (
+        "Something else — I'll describe it",
+        "",  # falls back to user's free-text prompt
+    ),
+}
+
+
+def _menu_text() -> str:
+    lines = ["", "  What would you like to do?", ""]
+    for key, (label, _) in _MENU_CHOICES.items():
+        lines.append(f"    {key}. {label}")
+    lines.extend([
+        "",
+        "  Type a number to pick one, type 'menu' to show this again,",
+        "  type 'exit' to quit, or just describe what you want in your own words.",
+        "",
+    ])
+    return "\n".join(lines)
+
+
+def _expand_menu_choice(raw_input: str) -> str | None:
+    """If the user typed a menu number, return the seed prompt. Else None."""
+    key = raw_input.strip()
+    if key not in _MENU_CHOICES:
+        return None
+    _, seed = _MENU_CHOICES[key]
+    return seed or None  # option 7 has empty seed → treat as not-a-menu-pick
+
+
 async def _interactive_loop(
     client: ClaudeSDKClient,
     verbose: bool,
     logger: logging.Logger | None = None,
 ) -> None:
-    print("\n  Agent Builder ready. Describe what agent you'd like to build.")
-    print("  Type 'exit' to quit. Ctrl+C cancels the current response.\n")
+    print("\n  Agent Builder ready.")
+    print(_menu_text())
 
     while True:
         try:
@@ -242,15 +297,27 @@ async def _interactive_loop(
                 logger.info("interactive loop interrupted by user")
             print()  # newline so the next prompt isn't glued to the traceback
             break
-        if user_input.strip().lower() in ("exit", "quit"):
+
+        stripped = user_input.strip()
+        lower = stripped.lower()
+
+        if lower in ("exit", "quit"):
             if logger:
                 logger.info("interactive loop exited via 'exit'/'quit'")
             break
-        if not user_input.strip():
+        if not stripped:
+            continue
+        if lower in ("menu", "?", "help"):
+            print(_menu_text())
             continue
 
+        seed = _expand_menu_choice(stripped)
+        prompt_to_send = seed if seed is not None else user_input
+        if seed is not None and logger:
+            logger.info("menu choice %s expanded to seed prompt", stripped)
+
         try:
-            await _run_one_query(client, user_input, verbose, logger=logger)
+            await _run_one_query(client, prompt_to_send, verbose, logger=logger)
         except KeyboardInterrupt:
             if logger:
                 logger.warning("query cancelled mid-flight by user")
