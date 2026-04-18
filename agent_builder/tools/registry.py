@@ -30,10 +30,30 @@ async def registry(args: dict[str, Any], registry_file: str = DEFAULT_REGISTRY) 
             "path": f"output/{agent_name}/",
             "status": "active",
         }
-        agents.append(entry)
+        existing_idx = next((i for i, a in enumerate(agents) if a["name"] == agent_name), None)
+        if existing_idx is not None:
+            entry["created"] = agents[existing_idx].get("created", entry["created"])
+            agents[existing_idx] = entry
+            verb = "Updated"
+        else:
+            agents.append(entry)
+            verb = "Registered"
         path.write_text(json.dumps(agents, indent=2), encoding="utf-8")
         return {
-            "content": [{"type": "text", "text": f"Registered agent '{agent_name}' in registry."}]
+            "content": [{"type": "text", "text": f"{verb} agent '{agent_name}' in registry."}]
+        }
+
+    if action == "remove":
+        agent_name = args.get("agent_name", "")
+        remaining = [a for a in agents if a["name"] != agent_name]
+        if len(remaining) == len(agents):
+            return {
+                "content": [{"type": "text", "text": f"Agent '{agent_name}' not found in registry."}],
+                "is_error": True,
+            }
+        path.write_text(json.dumps(remaining, indent=2), encoding="utf-8")
+        return {
+            "content": [{"type": "text", "text": f"Removed agent '{agent_name}' from registry."}]
         }
 
     if action == "list":
@@ -61,11 +81,11 @@ async def registry(args: dict[str, Any], registry_file: str = DEFAULT_REGISTRY) 
 
 registry_tool = tool(
     "registry",
-    "Manage the agent registry. Actions: 'add' (register new agent), 'list' (show all agents), 'describe' (show details for one agent).",
+    "Manage the agent registry. Actions: 'add' (register or update), 'remove' (drop entry), 'list' (show all), 'describe' (show one).",
     {
         "type": "object",
         "properties": {
-            "action": {"type": "string", "enum": ["add", "list", "describe"]},
+            "action": {"type": "string", "enum": ["add", "remove", "list", "describe"]},
             "agent_name": {"type": "string"},
             "description": {"type": "string"},
             "tools_list": {"type": "array", "items": {"type": "string"}},

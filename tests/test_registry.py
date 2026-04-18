@@ -85,3 +85,39 @@ async def test_list_empty_registry(registry_path: Path):
     result = await registry({"action": "list"}, registry_file=str(registry_path))
     text = result["content"][0]["text"]
     assert "No agents" in text
+
+
+@pytest.mark.asyncio
+async def test_add_dedupes_on_name(registry_path: Path):
+    await registry({
+        "action": "add", "agent_name": "dup", "description": "v1", "tools_list": ["a"],
+    }, registry_file=str(registry_path))
+    result = await registry({
+        "action": "add", "agent_name": "dup", "description": "v2", "tools_list": ["a", "b"],
+    }, registry_file=str(registry_path))
+    assert "Updated" in result["content"][0]["text"]
+    data = json.loads(registry_path.read_text(encoding="utf-8"))
+    assert len(data) == 1
+    assert data[0]["description"] == "v2"
+    assert data[0]["tools"] == ["a", "b"]
+
+
+@pytest.mark.asyncio
+async def test_remove_agent(registry_path: Path):
+    await registry({
+        "action": "add", "agent_name": "doomed", "description": "x", "tools_list": [],
+    }, registry_file=str(registry_path))
+    result = await registry({
+        "action": "remove", "agent_name": "doomed",
+    }, registry_file=str(registry_path))
+    assert "is_error" not in result
+    data = json.loads(registry_path.read_text(encoding="utf-8"))
+    assert data == []
+
+
+@pytest.mark.asyncio
+async def test_remove_missing_agent(registry_path: Path):
+    result = await registry({
+        "action": "remove", "agent_name": "nope",
+    }, registry_file=str(registry_path))
+    assert result.get("is_error") is True

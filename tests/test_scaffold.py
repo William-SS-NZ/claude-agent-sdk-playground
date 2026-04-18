@@ -69,3 +69,33 @@ async def test_scaffold_gitignore_contents(tmp_path: Path):
     assert ".env" in gitignore
     assert "__pycache__" in gitignore
     assert "CLAUDE.md" in gitignore
+
+
+@pytest.mark.asyncio
+async def test_scaffold_fills_all_placeholders(tmp_path: Path):
+    await scaffold_agent(
+        {
+            "agent_name": "filled",
+            "description": "placeholder test",
+            "tools_list": ["Read", "Edit"],
+            "allowed_tools_list": ["Read", "Edit", "mcp__agent_tools__foo"],
+            "permission_mode": "acceptEdits",
+        },
+        output_base=str(tmp_path),
+    )
+    agent_py = (tmp_path / "filled" / "agent.py").read_text(encoding="utf-8")
+    assert "{{" not in agent_py, "unfilled template placeholders remain"
+    assert "'Read'" in agent_py and "'Edit'" in agent_py
+    assert "mcp__agent_tools__foo" in agent_py
+    assert 'permission_mode="acceptEdits"' in agent_py
+
+
+@pytest.mark.asyncio
+async def test_scaffold_produces_parseable_python(tmp_path: Path):
+    import ast
+    await scaffold_agent(
+        {"agent_name": "parseme", "description": "x"},
+        output_base=str(tmp_path),
+    )
+    source = (tmp_path / "parseme" / "agent.py").read_text(encoding="utf-8")
+    ast.parse(source)

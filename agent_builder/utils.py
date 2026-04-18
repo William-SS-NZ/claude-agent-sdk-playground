@@ -1,7 +1,83 @@
 """Shared utilities for the Agent Builder."""
 
+import asyncio
+import sys
+import time
 from pathlib import Path
 from typing import Any
+
+
+class Spinner:
+    """Async stderr spinner. Pause to print without smearing the line.
+
+    Usage:
+        spinner = Spinner("thinking")
+        spinner.start()
+        with spinner.paused():
+            print("tool output")
+        spinner.stop()
+    """
+
+    FRAMES = ("|", "/", "-", "\\")
+
+    def __init__(self, label: str = "working", stream=sys.stderr) -> None:
+        self.label = label
+        self.stream = stream
+        self._task: asyncio.Task | None = None
+        self._paused = False
+        self._started_at: float | None = None
+
+    async def _spin(self) -> None:
+        i = 0
+        try:
+            while True:
+                if not self._paused:
+                    elapsed = time.monotonic() - (self._started_at or time.monotonic())
+                    frame = self.FRAMES[i % len(self.FRAMES)]
+                    self.stream.write(f"\r  {frame} {self.label} ({elapsed:4.1f}s)")
+                    self.stream.flush()
+                i += 1
+                await asyncio.sleep(0.1)
+        except asyncio.CancelledError:
+            self._clear()
+            raise
+
+    def _clear(self) -> None:
+        self.stream.write("\r" + " " * 60 + "\r")
+        self.stream.flush()
+
+    def start(self) -> None:
+        if self._task is not None:
+            return
+        self._started_at = time.monotonic()
+        self._task = asyncio.create_task(self._spin())
+
+    async def stop(self) -> None:
+        if self._task is None:
+            return
+        self._task.cancel()
+        try:
+            await self._task
+        except asyncio.CancelledError:
+            pass
+        self._task = None
+        self._clear()
+
+    class _Pause:
+        def __init__(self, spinner: "Spinner") -> None:
+            self.spinner = spinner
+
+        def __enter__(self):
+            self.spinner._paused = True
+            self.spinner._clear()
+            return self
+
+        def __exit__(self, *exc) -> None:
+            self.spinner._paused = False
+
+    def paused(self) -> "_Pause":
+        return Spinner._Pause(self)
+
 
 CLAUDE_MD_HEADER = "<!-- AUTO-GENERATED: Do not edit. Modify AGENT.md, SOUL.md, MEMORY.md, or USER.md instead. -->\n\n"
 

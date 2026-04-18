@@ -14,8 +14,13 @@ from claude_agent_sdk import (
     ToolUseBlock,
 )
 
-from agent_builder.utils import build_claude_md, format_tool_call
+from agent_builder.utils import Spinner, build_claude_md, format_tool_call
 from agent_builder.tools import builder_tools_server
+
+
+class _NullCtx:
+    def __enter__(self): return self
+    def __exit__(self, *exc): return None
 
 BUILDER_DIR = Path(__file__).parent.resolve()
 IDENTITY_DIR = BUILDER_DIR / "identity"
@@ -63,35 +68,53 @@ async def main() -> None:
                 continue
 
             await client.query(user_input)
-            async for message in client.receive_response():
-                if verbose:
-                    print(f"[{message.__class__.__name__}] {message}")
-
-                if isinstance(message, AssistantMessage):
-                    if message.error:
-                        print(f"[Error: {message.error}]")
-                        continue
-                    for block in message.content:
-                        if isinstance(block, TextBlock):
-                            print(block.text)
-                        elif isinstance(block, ToolUseBlock):
-                            if verbose:
-                                print(f"  [Tool: {block.name}] Input: {block.input}")
-                            else:
-                                print(format_tool_call(block.name, block.input))
-                elif isinstance(message, ResultMessage):
-                    if message.is_error:
-                        print(f"[Failed: {message.subtype}]")
+            spinner = Spinner("thinking") if not verbose else None
+            if spinner:
+                spinner.start()
+            try:
+                async for message in client.receive_response():
                     if verbose:
-                        print(f"  [Session: {message.session_id}]")
-                        print(f"  [Turns: {message.num_turns}, Duration: {message.duration_ms}ms]")
-                        if message.usage:
-                            print(f"  [Tokens: in={message.usage.get('input_tokens', '?')} out={message.usage.get('output_tokens', '?')}]")
-                    if message.total_cost_usd:
-                        print(f"  [Cost: ${message.total_cost_usd:.4f}]")
-                elif verbose and isinstance(message, SystemMessage):
-                    if message.subtype == "init":
-                        print(f"  [Init: {message.data}]")
+                        print(f"[{message.__class__.__name__}] {message}")
+
+                    if isinstance(message, AssistantMessage):
+                        if message.error:
+                            if spinner: spinner_ctx = spinner.paused()
+                            else: spinner_ctx = _NullCtx()
+                            with spinner_ctx:
+                                print(f"[Error: {message.error}]")
+                            continue
+                        for block in message.content:
+                            ctx = spinner.paused() if spinner else _NullCtx()
+                            with ctx:
+                                if isinstance(block, TextBlock):
+                                    print(block.text)
+                                elif isinstance(block, ToolUseBlock):
+                                    if verbose:
+                                        print(f"  [Tool: {block.name}] Input: {block.input}")
+                                    else:
+                                        print(format_tool_call(block.name, block.input))
+                            if spinner and isinstance(block, ToolUseBlock):
+                                spinner.label = f"running {block.name.split('__')[-1]}"
+                    elif isinstance(message, ResultMessage):
+                        ctx = spinner.paused() if spinner else _NullCtx()
+                        with ctx:
+                            if message.is_error:
+                                print(f"[Failed: {message.subtype}]")
+                            if verbose:
+                                print(f"  [Session: {message.session_id}]")
+                                print(f"  [Turns: {message.num_turns}, Duration: {message.duration_ms}ms]")
+                                if message.usage:
+                                    print(f"  [Tokens: in={message.usage.get('input_tokens', '?')} out={message.usage.get('output_tokens', '?')}]")
+                            if message.total_cost_usd:
+                                print(f"  [Cost: ${message.total_cost_usd:.4f}]")
+                    elif verbose and isinstance(message, SystemMessage):
+                        if message.subtype == "init":
+                            print(f"  [Init: {message.data}]")
+                    if spinner and isinstance(message, (AssistantMessage,)):
+                        spinner.label = "thinking"
+            finally:
+                if spinner:
+                    await spinner.stop()
 
 
 if __name__ == "__main__":
