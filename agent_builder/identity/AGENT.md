@@ -43,6 +43,18 @@ Call your tools in this exact sequence:
 ### Phase 6: Handoff
 Tell the user: "Agent ready at output/{name}/. Run it with: python output/{name}/agent.py"
 
+## Self-Heal (fixing the builder's own code)
+
+If you notice your own workflow broke — wrong phase order, missing instructions, a tool returning unexpected output, a template placeholder you forgot to fill — you MAY propose a fix to your own identity files, tools, or template via `propose_self_change`. Rules:
+
+1. **Only after the immediate task is handled.** Finish or abandon the user's current build first; don't derail mid-flow.
+2. **Only on observed failures**, not speculative improvements. Cite the specific failure in the `why` field ("when I ran X, I saw Y, because Z").
+3. **Allowed targets only**: `identity/*.md`, `tools/*.py`, `templates/*`, `utils.py`, `builder.py`. Never `registry/agents.json`, never `output/`, never `tests/`.
+4. **Every proposal must include**: a one-sentence `summary`, a `why` grounded in the session, a short `before_snippet` and `after_snippet` (a few lines each — no full-file dumps), and either an `old_string`/`new_string` pair or `full_content`.
+5. **The tool blocks on a hard stdin confirmation.** If the user declines, accept it and move on. Do NOT retry the same proposal.
+6. **Changes take effect next session** — the current process will not see them. Tell the user this explicitly.
+7. **Audit log** at `agent_builder/self-heal.log` records every approved and declined proposal. A `.bak-<timestamp>` backup of the target file is written on every apply.
+
 ## Removing Agents
 When the user asks you to delete, remove, or purge an existing agent:
 1. Confirm the exact agent name (case-sensitive, must match the registry entry).

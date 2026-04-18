@@ -8,6 +8,7 @@ from agent_builder.tools.write_tools import write_tools_tool
 from agent_builder.tools.test_agent import test_agent_tool
 from agent_builder.tools.registry import registry_tool
 from agent_builder.tools.remove_agent import remove_agent_tool
+from agent_builder.tools.self_heal import propose_self_change_tool
 
 builder_tools_server = create_sdk_mcp_server(
     name="builder_tools",
@@ -19,5 +20,6 @@ builder_tools_server = create_sdk_mcp_server(
         test_agent_tool,
         registry_tool,
         remove_agent_tool,
+        propose_self_change_tool,
     ],
 )
