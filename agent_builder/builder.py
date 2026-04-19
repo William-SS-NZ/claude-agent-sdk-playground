@@ -46,7 +46,7 @@ from agent_builder.utils import Spinner, build_claude_md, format_tool_call
 from agent_builder.tools import builder_tools_server
 from agent_builder.tools.remove_agent import remove_agent as _remove_agent_fn
 from agent_builder.tools.registry import DEFAULT_REGISTRY as _REGISTRY_PATH
-from agent_builder.cleanup import sweep_artifacts, format_summary as _format_sweep_summary
+from agent_builder.cleanup import sweep_artifacts, delete_swept, format_summary as _format_sweep_summary
 from agent_builder.doctor import run_health_check, format_checks as _format_doctor_checks
 
 
@@ -447,7 +447,8 @@ async def _cli_purge_all(yes: bool) -> int:
 
 
 def _cli_sweep(older_than_days: int, yes: bool) -> int:
-    """Dry-run summary, prompt for confirmation, then delete. No SDK, no cost."""
+    """Single filesystem scan, dry-run summary, prompt, then delete the same
+    set. No SDK, no cost."""
     summary = sweep_artifacts(REPO_ROOT, older_than_days=older_than_days, dry_run=True)
 
     nothing_found = (
@@ -466,7 +467,7 @@ def _cli_sweep(older_than_days: int, yes: bool) -> int:
             print("Aborted.")
             return 1
 
-    sweep_artifacts(REPO_ROOT, older_than_days=older_than_days, dry_run=False)
+    delete_swept(summary)
     print("Swept.")
     return 0
 

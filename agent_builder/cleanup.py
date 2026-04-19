@@ -161,6 +161,28 @@ def sweep_artifacts(
     }
 
 
+def delete_swept(summary: dict[str, Any]) -> None:
+    """Delete everything in a summary produced by `sweep_artifacts(dry_run=True)`.
+
+    Splitting delete out of the scan lets the CLI preview + confirm + delete
+    with a single filesystem walk instead of walking twice (once for the
+    dry-run summary, once more for the real sweep).
+    """
+    for p in summary.get("bak_files", []):
+        try:
+            p.unlink()
+        except OSError:
+            pass
+    for p in summary.get("builder_logs", []):
+        try:
+            p.unlink()
+        except OSError:
+            pass
+    screenshots_target = summary.get("screenshots")
+    if screenshots_target is not None:
+        shutil.rmtree(screenshots_target, ignore_errors=True)
+
+
 def format_summary(summary: dict[str, Any]) -> str:
     """Render the summary dict as a human-readable block for the CLI."""
     lines = ["Sweep targets:"]
