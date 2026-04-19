@@ -34,16 +34,26 @@ DENY_FILES = {
 
 AUDIT_LOG_PATH = BUILDER_DIR / "self-heal.log"
 
+# Module-level logger reference with NO FileHandler attached at import time.
+# The first call to _get_audit_logger() lazily installs the handler. This
+# keeps test runs from opening / polluting the real self-heal.log just by
+# importing this module.
 _audit_logger = logging.getLogger("agent_builder.self_heal")
-if not _audit_logger.handlers:
-    _audit_logger.setLevel(logging.INFO)
-    _fh = logging.FileHandler(AUDIT_LOG_PATH, encoding="utf-8")
-    _fh.setFormatter(logging.Formatter(
+
+
+def _get_audit_logger() -> logging.Logger:
+    """Lazy-init the audit logger. Opens the file handle on first use."""
+    if any(hasattr(h, "baseFilename") for h in _audit_logger.handlers):
+        return _audit_logger
+    handler = logging.FileHandler(AUDIT_LOG_PATH, encoding="utf-8")
+    handler.setFormatter(logging.Formatter(
         "%(asctime)s [%(levelname)s] %(message)s",
         datefmt="%Y-%m-%d %H:%M:%S",
     ))
-    _audit_logger.addHandler(_fh)
+    _audit_logger.addHandler(handler)
+    _audit_logger.setLevel(logging.INFO)
     _audit_logger.propagate = False
+    return _audit_logger
 
 
 def _validate_target(target_path: str) -> tuple[Path | None, str | None]:
@@ -145,7 +155,7 @@ async def propose_self_change(args: dict[str, Any]) -> dict[str, Any]:
 
     resolved, err = _validate_target(target_path)
     if err or resolved is None:
-        _audit_logger.warning("REJECTED_TARGET target=%s reason=%s", target_path, err)
+        _get_audit_logger().warning("REJECTED_TARGET target=%s reason=%s", target_path, err)
         return {
             "content": [{"type": "text", "text": err or "invalid target"}],
             "is_error": True,
@@ -168,7 +178,7 @@ async def propose_self_change(args: dict[str, Any]) -> dict[str, Any]:
 
     rel = resolved.relative_to(BUILDER_DIR).as_posix()
     if not approved:
-        _audit_logger.info(
+        _get_audit_logger().info(
             "DECLINED target=%s summary=%s",
             f"agent_builder/{rel}", summary,
         )
@@ -181,7 +191,7 @@ async def propose_self_change(args: dict[str, Any]) -> dict[str, Any]:
         if resolved.exists():
             backup = _make_backup_path(resolved)
             if backup is None:
-                _audit_logger.warning(
+                _get_audit_logger().warning(
                     "APPLY_FAILED target=%s reason=backup_collision",
                     f"agent_builder/{rel}",
                 )
@@ -200,7 +210,7 @@ async def propose_self_change(args: dict[str, Any]) -> dict[str, Any]:
     else:
         current = resolved.read_text(encoding="utf-8")
         if old_string not in current:
-            _audit_logger.warning(
+            _get_audit_logger().warning(
                 "APPLY_FAILED target=%s reason=old_string_not_found",
                 f"agent_builder/{rel}",
             )
@@ -209,7 +219,7 @@ async def propose_self_change(args: dict[str, Any]) -> dict[str, Any]:
                 "is_error": True,
             }
         if current.count(old_string) > 1:
-            _audit_logger.warning(
+            _get_audit_logger().warning(
                 "APPLY_FAILED target=%s reason=old_string_ambiguous",
                 f"agent_builder/{rel}",
             )
@@ -219,7 +229,7 @@ async def propose_self_change(args: dict[str, Any]) -> dict[str, Any]:
             }
         backup = _make_backup_path(resolved)
         if backup is None:
-            _audit_logger.warning(
+            _get_audit_logger().warning(
                 "APPLY_FAILED target=%s reason=backup_collision",
                 f"agent_builder/{rel}",
             )
@@ -234,7 +244,7 @@ async def propose_self_change(args: dict[str, Any]) -> dict[str, Any]:
         resolved.write_text(current.replace(old_string, new_string, 1), encoding="utf-8")
         change_summary = f"replaced {len(old_string)} chars with {len(new_string)} (backup: {backup.name})"
 
-    _audit_logger.info(
+    _get_audit_logger().info(
         "APPLIED target=%s summary=%s change=%s",
         f"agent_builder/{rel}", summary, change_summary,
     )

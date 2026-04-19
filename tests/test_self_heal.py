@@ -1,3 +1,4 @@
+import importlib
 import shutil
 from pathlib import Path
 
@@ -5,6 +6,20 @@ import pytest
 
 from agent_builder.tools import self_heal
 from agent_builder.tools.self_heal import propose_self_change, _validate_target
+
+
+def test_self_heal_importing_does_not_open_log_handler():
+    """Importing self_heal must NOT attach a FileHandler — real self-heal.log
+    should not be opened at test-collection time."""
+    import agent_builder.tools.self_heal as sh
+    # Clear any lazy-init that might have happened in a previous test in this process.
+    for h in list(sh._audit_logger.handlers):
+        sh._audit_logger.removeHandler(h)
+    importlib.reload(sh)  # fresh import
+
+    # After reload, no FileHandler should be attached to the audit logger.
+    file_handlers = [h for h in sh._audit_logger.handlers if hasattr(h, "baseFilename")]
+    assert file_handlers == [], f"FileHandler leaked at import: {file_handlers}"
 
 
 @pytest.fixture
