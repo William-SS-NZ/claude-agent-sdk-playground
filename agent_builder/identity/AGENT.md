@@ -55,6 +55,7 @@ Call your tools in this exact sequence. **All four are mandatory — every gener
 2. `write_identity` with all identity file content
 3. `write_tools` with the complete tools code including `create_sdk_mcp_server()` call (or `tools_code=""` to emit an empty stub when the agent uses only built-in tools like Read/Glob/Grep)
 4. `registry` with action "add" — this validates the build before sealing it. If any required file is missing (`agent.py`, `tools.py`, `AGENT.md`, `SOUL.md`, `MEMORY.md`), `registry add` returns `is_error` listing what's missing. Call the relevant tool to fix it, then re-run `registry add`.
+5. For every recipe approved in Phase 2.5, call `attach_recipe` with `{agent_name, recipe_name}` in declaration order. `attach_recipe` is idempotent per (agent, recipe@version). If a call returns `is_error`, STOP and surface the error to the user before continuing.
 
 **On any `is_error` response from any of these four tools: STOP. Read the error, address the cause, then re-run the failed tool. Never call the next tool while a previous one returned `is_error` — that produces silent half-built agents that crash on first run (e.g. `ModuleNotFoundError: No module named 'tools'`).**
 
