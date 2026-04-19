@@ -246,3 +246,46 @@ async def test_scaffold_cli_mode_false_omits_spec_format_epilog(tmp_path: Path):
     source = (tmp_path / "epilog-off" / "agent.py").read_text(encoding="utf-8")
     assert "SPEC FORMAT:" not in source
     assert "epilog=None" in source
+
+
+@pytest.mark.asyncio
+async def test_scaffold_cli_mode_default(tmp_path):
+    out = tmp_path / "output"
+    out.mkdir()
+    result = await scaffold_agent(
+        {"agent_name": "cli-a", "description": "x"},
+        output_base=str(out),
+    )
+    assert result.get("is_error") is not True
+    assert (out / "cli-a" / "agent.py").exists()
+    assert 'while True' in (out / "cli-a" / "agent.py").read_text()
+
+
+@pytest.mark.asyncio
+async def test_scaffold_poll_mode(tmp_path):
+    out = tmp_path / "output"
+    out.mkdir()
+    result = await scaffold_agent(
+        {"agent_name": "poll-a", "description": "x", "mode": "poll"},
+        output_base=str(out),
+    )
+    assert result.get("is_error") is not True
+    content = (out / "poll-a" / "agent.py").read_text()
+    assert 'async for incoming in poll_source' in content
+    # scaffold renders stubs for poll source when no recipe attached yet
+    assert "{{poll_source_import}}" not in content
+    assert "{{poll_source_expr}}" not in content
+    # Stub expression is present
+    assert "_stub_poll_source" in content
+
+
+@pytest.mark.asyncio
+async def test_scaffold_unknown_mode_errors(tmp_path):
+    out = tmp_path / "output"
+    out.mkdir()
+    result = await scaffold_agent(
+        {"agent_name": "bad", "description": "x", "mode": "carrier-pigeon"},
+        output_base=str(out),
+    )
+    assert result["is_error"] is True
+    assert "mode" in result["content"][0]["text"]

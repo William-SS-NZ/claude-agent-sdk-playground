@@ -14,27 +14,61 @@ TEMPLATES_DIR = Path(__file__).parent.parent / "templates"
 
 NAME_PATTERN = re.compile(r"^[a-z0-9][a-z0-9-]*$")
 
-# Placeholders the scaffold template MUST contain. Single source of truth —
-# doctor.py imports this to keep its drift guard in sync with what scaffold
-# actually substitutes. Every entry here must appear both in the template
-# and in the .replace() chain inside scaffold_agent().
-REQUIRED_PLACEHOLDERS = (
+# Mode -> template filename. "server" mode arrives in Phase F.
+_TEMPLATE_BY_MODE = {
+    "cli": "agent_main.py.tmpl",
+    "poll": "agent_poll.py.tmpl",
+}
+
+# Stubs filled when no recipe supplies poll_source. Keeps generated agents
+# syntactically valid so they can be run (will raise NotImplementedError when
+# the poll loop starts, with a helpful message).
+_POLL_SOURCE_IMPORT_STUB = ""
+_POLL_SOURCE_EXPR_STUB = (
+    "_stub_poll_source()  # attach a poll recipe (e.g. telegram-poll) to replace this"
+)
+_POLL_SOURCE_STUB_IMPL = '''
+async def _stub_poll_source():
+    raise NotImplementedError(
+        "No poll source attached. Run: python -m agent_builder.builder "
+        "then attach_recipe for this agent with a poll-type recipe."
+    )
+    yield  # pragma: no cover — make this a generator
+'''
+
+# Placeholders common to every template.
+REQUIRED_PLACEHOLDERS_COMMON = (
     "{{agent_name}}",
     "{{agent_description}}",
     "{{builder_version}}",
+    "{{recipe_pins_block}}",
     "{{tools_list}}",
     "{{allowed_tools_list}}",
     "{{permission_mode}}",
     "{{max_turns}}",
     "{{max_budget_usd}}",
-    "{{cli_args_block}}",
-    "{{cli_dispatch_block}}",
-    "{{cli_help_epilog}}",
     "{{recipe_imports_block}}",
     "{{recipe_servers_block}}",
     "{{external_mcp_block}}",
-    "{{recipe_pins_block}}",
 )
+
+# Mode-specific placeholders. Doctor imports REQUIRED_PLACEHOLDERS_BY_MODE
+# to run the drift guard over every template.
+REQUIRED_PLACEHOLDERS_BY_MODE = {
+    "cli": REQUIRED_PLACEHOLDERS_COMMON + (
+        "{{cli_args_block}}",
+        "{{cli_dispatch_block}}",
+        "{{cli_help_epilog}}",
+    ),
+    "poll": REQUIRED_PLACEHOLDERS_COMMON + (
+        "{{poll_source_import}}",
+        "{{poll_source_expr}}",
+    ),
+}
+
+# Back-compat alias — doctor.py still imports REQUIRED_PLACEHOLDERS, and the
+# scaffold template drift guard in test_scaffold.py references it.
+REQUIRED_PLACEHOLDERS = REQUIRED_PLACEHOLDERS_BY_MODE["cli"]
 
 GITIGNORE_CONTENT = """\
 .env
@@ -135,6 +169,15 @@ async def scaffold_agent(args: dict[str, Any], output_base: str = "output") -> d
     max_turns = int(args.get("max_turns", 25))
     max_budget_usd = float(args.get("max_budget_usd", 1.00))
     cli_mode = bool(args.get("cli_mode", True))
+    mode = args.get("mode", "cli")
+
+    if mode not in _TEMPLATE_BY_MODE:
+        return {
+            "content": [{"type": "text", "text": (
+                f"Invalid mode '{mode}'. Allowed: {sorted(_TEMPLATE_BY_MODE)}."
+            )}],
+            "is_error": True,
+        }
 
     error = _validate_agent_name(agent_name, output_base)
     if error:
@@ -150,16 +193,17 @@ async def scaffold_agent(args: dict[str, Any], output_base: str = "output") -> d
 
     agent_dir.mkdir(parents=True)
 
-    # Render agent_main.py template
-    template_path = TEMPLATES_DIR / "agent_main.py.tmpl"
+    # Render agent entrypoint template (varies by mode).
+    template_path = TEMPLATES_DIR / _TEMPLATE_BY_MODE[mode]
     template = template_path.read_text(encoding="utf-8")
 
-    missing_in_template = [p for p in REQUIRED_PLACEHOLDERS if p not in template]
+    expected_placeholders = REQUIRED_PLACEHOLDERS_BY_MODE[mode]
+    missing_in_template = [p for p in expected_placeholders if p not in template]
     if missing_in_template:
         return {
             "content": [{"type": "text", "text": (
                 f"Template is missing expected placeholders: {missing_in_template}. "
-                "This is a builder bug — update agent_main.py.tmpl."
+                f"This is a builder bug — update {_TEMPLATE_BY_MODE[mode]}."
             )}],
             "is_error": True,
         }
@@ -173,6 +217,17 @@ async def scaffold_agent(args: dict[str, Any], output_base: str = "output") -> d
 
     # Description is for argparse --help, so escape any quotes
     description_for_help = (description or f"{agent_name} agent").replace('"', '\\"')
+
+    # For poll mode, inject the _stub_poll_source() helper above `# --- Main ---`
+    # so the generated agent runs without NameError before a real poll recipe is
+    # attached. Must happen BEFORE the placeholder .replace() chain so the stub
+    # body doesn't accidentally interact with substitutions.
+    if mode == "poll":
+        template = template.replace(
+            "# --- Main ---",
+            _POLL_SOURCE_STUB_IMPL + "\n# --- Main ---",
+            1,
+        )
 
     agent_py = (
         template
@@ -192,6 +247,13 @@ async def scaffold_agent(args: dict[str, Any], output_base: str = "output") -> d
         .replace("{{external_mcp_block}}", "# <<external_mcp_block>>\n            # <</external_mcp_block>>")
         .replace("{{recipe_pins_block}}", "# <<recipe_pins_block>>\nRECIPE_PINS = {}\n# <</recipe_pins_block>>")
     )
+
+    if mode == "poll":
+        agent_py = (
+            agent_py
+            .replace("{{poll_source_import}}", _POLL_SOURCE_IMPORT_STUB)
+            .replace("{{poll_source_expr}}", _POLL_SOURCE_EXPR_STUB)
+        )
 
     # Fail loudly if any placeholder survived — the generated agent.py would
     # be invalid Python and fail with NameError on first run otherwise.
@@ -244,7 +306,9 @@ scaffold_agent_tool = tool(
     "max_budget_usd: per-conversation USD budget cap (default 1.00). "
     "cli_mode: when true (default), the generated agent.py also accepts "
     "-p/--prompt 'text' and -s/--spec file.json for non-interactive runs. "
-    "Set false to ship a chat-only agent.",
+    "Set false to ship a chat-only agent. "
+    "mode: 'cli' (default) for interactive / CLI agents, 'poll' for long-poll "
+    "workers that react to an incoming-message stream (e.g. Telegram).",
     {
         "type": "object",
         "properties": {
@@ -256,6 +320,7 @@ scaffold_agent_tool = tool(
             "max_turns": {"type": "integer"},
             "max_budget_usd": {"type": "number"},
             "cli_mode": {"type": "boolean"},
+            "mode": {"type": "string", "enum": ["cli", "poll"]},
         },
         "required": ["agent_name", "description"],
     },
