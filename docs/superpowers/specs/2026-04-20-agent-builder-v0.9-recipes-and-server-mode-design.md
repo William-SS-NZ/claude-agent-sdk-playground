@@ -318,7 +318,143 @@ Each phase ships independently and leaves the builder in a usable state. No phas
 - **OAuth helper portability** — `setup_auth.py` runs in the user's shell post-build; if their Python env doesn't have `google-auth-oauthlib`, it crashes with a confusing error. Mitigation: helper's first action is to `pip install` its own deps into a venv, or at minimum print a clear "missing dep" error before attempting the flow.
 - **Webhook bind on shared hosts** — server template binds `0.0.0.0` by default; on shared machines this exposes the port to other users. Mitigation: default to `127.0.0.1` and require explicit env override to bind public.
 
-## 13. Acceptance Criteria (for the v0.9.0 milestone — end of Phase E)
+## 13. Amendment — Composition Retrofit (decided 2026-04-20)
+
+After review, the insertion-based attach model (§3, §7, §8) is replaced by a composition-based model before any of v0.9 is built. Rationale: insertion has unavoidable anchor-drift and overlap-ordering bugs; composition eliminates both structurally and aligns with the SDK's multi-MCP-server pattern.
+
+### 13.1 What changes
+
+**Tool recipes become standalone MCP servers.** Each tool recipe's `tool.py` ends with its own `create_sdk_mcp_server(name=<slug>, version=<version>, tools=[...])` call assigned to `tools_server`. `attach_recipe` for tool type no longer inserts code into the agent's `tools.py`. Instead it:
+
+1. Copies the recipe's `tool.py` to `output/<agent>/_recipes/<slug>.py` (slug-safe filename — hyphens become underscores).
+2. Updates the agent's `.recipe_manifest.json` (see §14.2).
+3. Calls `render_agent()` which rebuilds `agent.py` and `AGENT.md` from the template + manifest.
+
+The agent's own `tools.py` stays minimal — only agent-bespoke tools the user writes during this specific build. Recipe-sourced tools never land in `tools.py`.
+
+**Rendered `agent.py` `mcp_servers` dict:**
+
+```python
+mcp_servers={
+    "agent_tools": tools_server,             # agent's own bespoke tools
+    "telegram_poll": telegram_poll_server,   # from recipe (imported from _recipes/)
+    "gcal": {...stdio config from mcp.json...},  # from mcp-type recipe
+}
+```
+
+**Recipe imports in agent.py** are generated from the manifest:
+
+```python
+# --- recipe servers (auto-generated from .recipe_manifest.json) ---
+from _recipes.telegram_poll import tools_server as telegram_poll_server
+```
+
+### 13.2 `.recipe_manifest.json`
+
+Source of truth for every agent. Lives at `output/<agent>/.recipe_manifest.json`. Shape:
+
+```json
+{
+  "manifest_version": 1,
+  "agent_name": "tg-gcal",
+  "builder_version": "0.9.0",
+  "recipes": [
+    {"name": "telegram-poll", "type": "tool", "version": "0.1.0", "attached_at": "2026-04-20"},
+    {"name": "google-calendar", "type": "mcp", "version": "0.1.0", "attached_at": "2026-04-20"}
+  ],
+  "components": []
+}
+```
+
+- `attach_recipe` appends to `recipes`, dedupes by name (re-attach = no-op), then calls `render_agent`.
+- Detach (v0.10) removes from `recipes` and re-renders.
+- Ordering is insertion order; render applies deterministic sort by name before writing imports so diffs are stable.
+
+The `RECIPE_PINS` dict stays in `agent.py` (generated from manifest) for backwards-compat with doctor and future resync; manifest is the authoritative copy.
+
+### 13.3 `render_agent` module
+
+New `agent_builder/render.py`. Responsibilities:
+
+1. Read `.recipe_manifest.json`.
+2. Render `agent.py` from `templates/agent_<mode>.py.tmpl` substituting:
+   - `{{external_mcp_block}}` — entries from mcp-type recipes (full SDK-shaped dicts from each recipe's `mcp.json`)
+   - `{{recipe_imports_block}}` — `from _recipes.<slug> import tools_server as <slug>_server` lines for every tool-type recipe
+   - `{{recipe_servers_block}}` — `"<slug>": <slug>_server,` entries for the `mcp_servers` dict
+   - `{{recipe_pins_block}}` — `RECIPE_PINS = {...}` from manifest
+   - `{{poll_source_import}}` and `{{poll_source_expr}}` — set when a poll-capable recipe is attached and `mode="poll"`, else stubs
+3. Render `AGENT.md` from `templates/agent_md.tmpl` (new) substituting slot content from skill recipes + components (§14.5).
+4. Never touches `MEMORY.md`, `SOUL.md`, `USER.md`, `tools.py`, or `.env.example`.
+
+Called idempotently after every attach/detach/edit. Deterministic — same manifest → same output bytes.
+
+### 13.4 `TEST_MODE` via env var
+
+Current `TEST_MODE = False` global in `tools.py` (flipped by `test_agent`) does not scale to per-recipe-server files. Replaced by env var `AGENT_TEST_MODE`:
+
+- Every recipe's `tool.py` reads `os.environ.get("AGENT_TEST_MODE") == "1"` at tool-call time (not at module import — lazy, so test_agent can flip mid-process).
+- `TOOLS_HEADER` no longer sets `TEST_MODE = False`; instead it exposes a helper:
+
+  ```python
+  def _test_mode() -> bool:
+      return os.environ.get("AGENT_TEST_MODE") == "1"
+  ```
+
+- Every tool body replaces `if TEST_MODE:` with `if _test_mode():`.
+- `test_agent` sets `AGENT_TEST_MODE=1` in its subprocess/os.environ and unsets it in `finally`.
+
+Simpler, no file mutation, works identically across bespoke tools and recipe servers.
+
+### 13.5 AGENT.md becomes slot-rendered
+
+New template `agent_builder/templates/agent_md.tmpl`. Canonical slots (fixed set; adding more = deliberate template change):
+
+- `{{slot:purpose}}` — what the agent does (from agent's own identity design)
+- `{{slot:workflow}}` — how it operates (agent identity + skill recipes contribute here)
+- `{{slot:constraints}}` — rules and limits (agent identity + skill recipes)
+- `{{slot:tools_reference}}` — rendered list of attached tools/MCPs with short descriptions (auto-generated from manifest)
+- `{{slot:examples}}` — usage examples (agent identity + skill recipes)
+- `{{slot:first_run_setup}}` — OAuth helper banners, one per oauth-capable recipe attached
+- `{{slot:user_additions}}` — free-form, user-owned. NEVER touched by render. Lives at the bottom of AGENT.md.
+- `{{slot:builder_agent_additions}}` — free-form, builder-owned. Builder may write here via `edit_agent` with wide latitude to modify created-agent behavior. NEVER touched by render. Lives just above `user_additions`.
+
+**Render rule:** slots `user_additions` and `builder_agent_additions` are **preserved verbatim** from the existing AGENT.md across rerenders. All other slots are fully regenerated from template + manifest + recipe `skill.md` bodies. First render creates the file with empty `user_additions` / `builder_agent_additions` sections marked by explicit comments so the extractor can find them next rerender.
+
+**`edit_agent` behavior:**
+- For `MEMORY.md`, `SOUL.md`, `USER.md`, `tools.py`: same as today — direct overwrite with `.bak-<timestamp>`.
+- For `AGENT.md`: edits go into the `builder_agent_additions` slot by default. An optional `slot="<name>"` param lets the builder target a specific slot (e.g. `slot="constraints"`) — writing to a rendered slot that gets regenerated on next attach is an explicit choice with a WARN-level log line: "writing to rendered slot `<name>` — content will be overwritten if a recipe recomputes this slot; use `slot=builder_agent_additions` for durable edits."
+- The builder agent has great latitude here — `builder_agent_additions` is the durable "builder tweaked the agent's behavior" zone.
+
+### 13.6 Impact on v0.9 plan
+
+The implementation plan needs these additions/modifications (captured in the plan's own amendment section — see that file for the revised task list):
+
+- **New Phase 0** (prepended) — composition foundation: manifest schema + render module + env var TEST_MODE + AGENT.md template with slots. Four tasks, must ship before any tool recipe work.
+- **Task B2 rewritten** — `attach_recipe` for tool type uses composition: copies recipe to `_recipes/<slug>.py`, updates manifest, calls render.
+- **Task B1 adjusted** — instead of just `{{recipe_pins_block}}`, the CLI template gains four new placeholders: `{{recipe_pins_block}}`, `{{recipe_imports_block}}`, `{{recipe_servers_block}}`, `{{external_mcp_block}}` — all filled by `render_agent` from the manifest. Empty defaults at scaffold time.
+- **Task C5 rewritten** — poll-source wiring goes through manifest (`poll_capable_recipes` field in manifest); `render_agent` fills `{{poll_source_import}}` / `{{poll_source_expr}}` based on it.
+- **Task D3 adjusted** — MCP-type attach already uses composition; only change is that `.env.example` merge + handoff banner stay as-is but the `agent.py` mcp_servers update goes through manifest+render instead of direct regex replace.
+- **Task E3 adjusted** — `setup_auth.py` rendering unchanged (it's per-agent, not per-file-edit).
+- **New task** — `tools.py` gains a `# NOTE: this file is for agent-bespoke tools only. Recipe-sourced tools live in _recipes/ and are auto-registered via agent.py` comment at the top.
+
+### 13.7 Trade-offs accepted
+
+- Users lose the ability to hand-edit the generated portions of `AGENT.md` — must use `user_additions` or `builder_agent_additions`. Documented loudly in CLAUDE.md.
+- Each agent dir gains a `_recipes/` subdir with one small file per attached tool recipe. Small files, clean.
+- `tools.py` becomes thinner — only bespoke tools. Recipes never pollute it.
+- Tool namespaces change: `mcp__agent_tools__<fn>` becomes `mcp__<recipe-slug>__<fn>` for recipe-sourced tools. Builder must update `allowed_tools` computation accordingly.
+
+### 13.8 What did NOT change
+
+- `MEMORY.md`, `SOUL.md`, `USER.md` are user-owned — never rerendered.
+- `.env.example` merging — same as §8.
+- `setup_auth.py` rendering — same as §5.
+- `doctor` — gets slightly richer (validates manifest shape, _recipes/ consistency).
+- Scaffold-time mode selection (cli/poll/server) — same as §10 phasing.
+
+---
+
+## 14. Acceptance Criteria (for the v0.9.0 milestone — end of Phase E)
 
 - [ ] `recipes/` directory shipped with at least two recipes: `telegram-poll` (tool) and `google-calendar` (mcp, with OAuth helper).
 - [ ] `list_recipes` and `attach_recipe` builder tools available; Phase 2.5 documented in builder's `AGENT.md`.
