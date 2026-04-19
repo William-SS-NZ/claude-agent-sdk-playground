@@ -34,6 +34,10 @@ def _render_template(agent_dir: Path, agent_name: str = "tmpl-test") -> Path:
         .replace("{{cli_args_block}}", "")
         .replace("{{cli_dispatch_block}}", "")
         .replace("{{cli_help_epilog}}", "None")
+        .replace("{{recipe_imports_block}}", "# <<recipe_imports_block>>\n# <</recipe_imports_block>>")
+        .replace("{{recipe_servers_block}}", "# <<recipe_servers_block>>\n            # <</recipe_servers_block>>")
+        .replace("{{external_mcp_block}}", "# <<external_mcp_block>>\n            # <</external_mcp_block>>")
+        .replace("{{recipe_pins_block}}", "# <<recipe_pins_block>>\nRECIPE_PINS = {}\n# <</recipe_pins_block>>")
     )
     assert "{{" not in rendered, "unfilled template placeholders remain"
     agent_py = agent_dir / "agent.py"

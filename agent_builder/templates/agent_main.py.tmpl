@@ -27,6 +27,12 @@ from claude_agent_sdk import (
     HookMatcher,
 )
 
+# --- recipe servers ---
+{{recipe_imports_block}}
+# --- /recipe servers ---
+
+{{recipe_pins_block}}
+
 AGENT_NAME = "{{agent_name}}"
 GENERATED_WITH_BUILDER_VERSION = "{{builder_version}}"
 AGENT_DIR = Path(__file__).parent.resolve()
@@ -393,7 +399,11 @@ async def main():
     options = ClaudeAgentOptions(
         setting_sources=["project"],
         cwd=str(AGENT_DIR),
-        mcp_servers={"agent_tools": tools_server},
+        mcp_servers={
+            "agent_tools": tools_server,
+            {{recipe_servers_block}}
+            {{external_mcp_block}}
+        },
         tools={{tools_list}},
         allowed_tools={{allowed_tools_list}},
         permission_mode="{{permission_mode}}",

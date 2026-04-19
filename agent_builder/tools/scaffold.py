@@ -7,6 +7,7 @@ from typing import Any
 from claude_agent_sdk import tool
 
 from agent_builder import _version as _builder_version
+from agent_builder.manifest import MANIFEST_FILENAME, empty_manifest, save_manifest
 
 TEMPLATES_DIR = Path(__file__).parent.parent / "templates"
 
@@ -28,6 +29,10 @@ REQUIRED_PLACEHOLDERS = (
     "{{cli_args_block}}",
     "{{cli_dispatch_block}}",
     "{{cli_help_epilog}}",
+    "{{recipe_imports_block}}",
+    "{{recipe_servers_block}}",
+    "{{external_mcp_block}}",
+    "{{recipe_pins_block}}",
 )
 
 GITIGNORE_CONTENT = """\
@@ -174,6 +179,10 @@ async def scaffold_agent(args: dict[str, Any], output_base: str = "output") -> d
         .replace("{{cli_args_block}}", cli_args_block)
         .replace("{{cli_dispatch_block}}", cli_dispatch_block)
         .replace("{{cli_help_epilog}}", cli_help_epilog)
+        .replace("{{recipe_imports_block}}", "# <<recipe_imports_block>>\n# <</recipe_imports_block>>")
+        .replace("{{recipe_servers_block}}", "# <<recipe_servers_block>>\n            # <</recipe_servers_block>>")
+        .replace("{{external_mcp_block}}", "# <<external_mcp_block>>\n            # <</external_mcp_block>>")
+        .replace("{{recipe_pins_block}}", "# <<recipe_pins_block>>\nRECIPE_PINS = {}\n# <</recipe_pins_block>>")
     )
 
     # Fail loudly if any placeholder survived — the generated agent.py would
@@ -198,7 +207,14 @@ async def scaffold_agent(args: dict[str, Any], output_base: str = "output") -> d
     # Write .gitignore
     (agent_dir / ".gitignore").write_text(GITIGNORE_CONTENT, encoding="utf-8")
 
-    created_files = ["agent.py", ".env.example", ".gitignore"]
+    # Seed an empty .recipe_manifest.json so later attach_recipe calls have
+    # a file to read and render_agent can reconstitute the agent deterministically.
+    save_manifest(
+        agent_dir / MANIFEST_FILENAME,
+        empty_manifest(agent_name=agent_name, builder_version=_builder_version.__version__),
+    )
+
+    created_files = ["agent.py", ".env.example", ".gitignore", MANIFEST_FILENAME]
     return {
         "content": [
             {
