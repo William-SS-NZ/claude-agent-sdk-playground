@@ -7,6 +7,7 @@ from typing import Any
 
 from claude_agent_sdk import tool
 
+from agent_builder.paths import validate_relative_to_base
 from agent_builder.tools.scaffold import _validate_agent_name
 
 DEFAULT_REGISTRY = str(Path(__file__).parent.parent / "registry" / "agents.json")
@@ -32,19 +33,22 @@ async def remove_agent(
         return {"content": [{"type": "text", "text": error}], "is_error": True}
 
     base = Path(output_base).resolve()
-    target = (base / agent_name).resolve()
+
+    # Shared containment check — defence in depth on top of the slug/name
+    # validation above. Rejects anything that resolves outside output_base.
+    target, err = validate_relative_to_base(
+        str(base / agent_name),
+        [base],
+    )
+    if err is not None or target is None:
+        return {
+            "content": [{"type": "text", "text": f"Target escapes output base: {err}"}],
+            "is_error": True,
+        }
 
     if target == base:
         return {
             "content": [{"type": "text", "text": "Refusing to delete the output directory itself."}],
-            "is_error": True,
-        }
-
-    try:
-        target.relative_to(base)
-    except ValueError:
-        return {
-            "content": [{"type": "text", "text": f"Target escapes output base: {target}"}],
             "is_error": True,
         }
 

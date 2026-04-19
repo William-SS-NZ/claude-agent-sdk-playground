@@ -21,6 +21,8 @@ from typing import Any
 
 from claude_agent_sdk import tool
 
+from agent_builder.paths import validate_relative_to_base
+
 BUILDER_DIR = Path(__file__).parent.parent.resolve()
 ALLOWED_SUBDIRS = ("identity", "tools", "templates")
 ALLOWED_TOP_FILES = ("utils.py", "builder.py")
@@ -57,7 +59,17 @@ def _get_audit_logger() -> logging.Logger:
 
 
 def _validate_target(target_path: str) -> tuple[Path | None, str | None]:
-    """Return (resolved_path, None) if allowed, else (None, error_message)."""
+    """Return (resolved_path, None) if allowed, else (None, error_message).
+
+    Layered safety check:
+      1. Pre-resolution shape check — reject absolute paths and drive-letter
+         prefixes (relative-to-``agent_builder/`` contract).
+      2. Shared containment — ``validate_relative_to_base`` confirms the
+         resolved path lands inside ``BUILDER_DIR``.
+      3. Self-heal-specific deny-list (``registry/agents.json``, this file).
+      4. Self-heal-specific whitelist (``identity/``, ``tools/``,
+         ``templates/``, plus ``utils.py``/``builder.py`` at the top level).
+    """
     # Reject leading slashes/backslashes and drive-letter prefixes explicitly
     # because Path("/tmp/x").is_absolute() is False on Windows (no drive letter).
     if target_path.startswith(("/", "\\")) or (len(target_path) > 1 and target_path[1] == ":"):
@@ -67,12 +79,12 @@ def _validate_target(target_path: str) -> tuple[Path | None, str | None]:
     if rel.is_absolute():
         return None, "target_path must be relative to agent_builder/ (no absolute paths)."
 
-    resolved = (BUILDER_DIR / rel).resolve()
-
-    try:
-        resolved.relative_to(BUILDER_DIR)
-    except ValueError:
-        return None, f"target_path escapes agent_builder/: {resolved}"
+    resolved, err = validate_relative_to_base(
+        str(BUILDER_DIR / rel),
+        [BUILDER_DIR],
+    )
+    if err is not None or resolved is None:
+        return None, f"target_path escapes agent_builder/: {BUILDER_DIR / rel}"
 
     rel_inside = resolved.relative_to(BUILDER_DIR)
     rel_posix = rel_inside.as_posix()

@@ -8,6 +8,7 @@ from claude_agent_sdk import tool
 
 from agent_builder import _version as _builder_version
 from agent_builder.manifest import MANIFEST_FILENAME, empty_manifest, save_manifest
+from agent_builder.paths import validate_relative_to_base
 
 TEMPLATES_DIR = Path(__file__).parent.parent / "templates"
 
@@ -100,18 +101,25 @@ _CLI_DISPATCH_BLOCK = '''\
 
 
 def _validate_agent_name(agent_name: str, output_base: str) -> str | None:
-    """Validate agent_name and return error message if invalid, None if valid."""
+    """Validate agent_name and return error message if invalid, None if valid.
+
+    The slug-regex check and the "no ``..``/``/``/``\\\\`` in the name" check
+    are scaffold-specific (agent names must be clean, human-readable slugs).
+    The "does this path land inside output_base?" check delegates to the
+    shared ``validate_relative_to_base`` helper — same logic the other three
+    tools use.
+    """
     if not NAME_PATTERN.match(agent_name):
         return f"Invalid agent name '{agent_name}'. Must match ^[a-z0-9][a-z0-9-]*$ (lowercase alphanumeric and hyphens, must start with alphanumeric)."
 
     if ".." in agent_name or "/" in agent_name or "\\" in agent_name:
         return f"Invalid agent name '{agent_name}'. Must not contain '..', '/', or '\\\\'."
 
-    resolved = (Path(output_base) / agent_name).resolve()
-    base_resolved = Path(output_base).resolve()
-    try:
-        resolved.relative_to(base_resolved)
-    except ValueError:
+    _, err = validate_relative_to_base(
+        str(Path(output_base) / agent_name),
+        [Path(output_base)],
+    )
+    if err is not None:
         return f"Invalid agent name '{agent_name}'. Path traversal detected."
 
     return None

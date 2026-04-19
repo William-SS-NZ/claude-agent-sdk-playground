@@ -31,6 +31,8 @@ from typing import Any
 
 from claude_agent_sdk import tool
 
+from agent_builder.paths import validate_relative_to_base
+
 # Repo root = two levels up from this file (agent_builder/tools/rollback.py).
 REPO_ROOT = Path(__file__).parent.parent.parent.resolve()
 BUILDER_DIR = REPO_ROOT / "agent_builder"
@@ -47,6 +49,11 @@ def _validate_target(target_path: str) -> tuple[Path | None, str | None]:
     Accepts any relative path that, after resolution, lands under the repo
     root, ``agent_builder/``, or ``output/``. Rejects absolute paths,
     Windows drive letters, and ``..`` escapes.
+
+    The absolute-path / drive-letter rejection is a pre-resolution shape
+    check that's specific to rollback's "relative-only" contract; once that's
+    cleared, the multi-base containment check delegates to the shared
+    ``validate_relative_to_base`` helper.
     """
     if not target_path:
         return None, "target_path must not be empty."
@@ -61,20 +68,18 @@ def _validate_target(target_path: str) -> tuple[Path | None, str | None]:
     if rel.is_absolute():
         return None, "target_path must be a relative path."
 
-    resolved = (REPO_ROOT / rel).resolve()
-
-    allowed_bases = (REPO_ROOT, BUILDER_DIR, OUTPUT_DIR)
-    for base in allowed_bases:
-        try:
-            resolved.relative_to(base)
-            return resolved, None
-        except ValueError:
-            continue
-
-    return None, (
-        f"target_path '{target_path}' escapes allowed roots. "
-        f"Must resolve under the repo root, agent_builder/, or output/."
+    resolved, err = validate_relative_to_base(
+        str(REPO_ROOT / rel),
+        [REPO_ROOT, BUILDER_DIR, OUTPUT_DIR],
     )
+    if err is not None or resolved is None:
+        # Preserve rollback-specific wording that tests assert on
+        # ("escapes" + the list of allowed roots).
+        return None, (
+            f"target_path '{target_path}' escapes allowed roots. "
+            f"Must resolve under the repo root, agent_builder/, or output/."
+        )
+    return resolved, None
 
 
 def _validate_backup_name(backup_name: str, target: Path) -> tuple[Path | None, str | None]:
