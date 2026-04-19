@@ -154,3 +154,40 @@ def test_doctor_fails_on_missing_builder_version_placeholder(tmp_path: Path):
     fails = [c for c in checks if c["status"] == "FAIL"]
     assert any("{{builder_version}}" in c["detail"] for c in fails)
     assert exit_code == 1
+
+
+def test_doctor_reports_recipe_load_ok(tmp_path: Path):
+    """Doctor reports OK when the recipes/ subtree is empty but present."""
+    registry = _seed_builder(tmp_path)
+    recipes_dir = tmp_path / "agent_builder" / "recipes"
+    recipes_dir.mkdir()
+    for d in ("mcps", "tools", "skills"):
+        (recipes_dir / d).mkdir()
+
+    checks, exit_code = run_health_check(tmp_path, registry_file=str(registry))
+    assert exit_code == 0
+    recipe_checks = [c for c in checks if "recipe" in c["name"].lower()]
+    assert any(c["status"] == "OK" for c in recipe_checks)
+
+
+def test_doctor_reports_bad_recipe_fail(tmp_path: Path):
+    """Doctor FAILs when a recipe cannot be parsed."""
+    registry = _seed_builder(tmp_path)
+    broken = tmp_path / "agent_builder" / "recipes" / "tools" / "busted"
+    broken.mkdir(parents=True)
+    (broken / "RECIPE.md").write_text("no frontmatter", encoding="utf-8")
+
+    checks, exit_code = run_health_check(tmp_path, registry_file=str(registry))
+    assert exit_code == 1
+    assert any(c["status"] == "FAIL" and "recipe" in c["name"].lower() for c in checks)
+
+
+def test_doctor_warns_when_recipes_dir_missing(tmp_path: Path):
+    """Doctor WARNs (not FAILs) when the recipes/ dir is absent."""
+    registry = _seed_builder(tmp_path)
+    # No recipes dir at all.
+
+    checks, exit_code = run_health_check(tmp_path, registry_file=str(registry))
+    assert exit_code == 0
+    recipe_checks = [c for c in checks if "recipes" in c["name"].lower()]
+    assert any(c["status"] == "WARN" for c in recipe_checks)

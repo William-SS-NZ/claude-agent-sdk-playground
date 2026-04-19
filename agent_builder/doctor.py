@@ -17,6 +17,8 @@ import re
 from pathlib import Path
 from typing import Any
 
+from agent_builder.recipes.loader import load_all_recipes
+from agent_builder.recipes.schema import RecipeError
 from agent_builder.tools.registry import DEFAULT_REGISTRY, REQUIRED_AGENT_FILES
 from agent_builder.tools.scaffold import REQUIRED_PLACEHOLDERS as EXPECTED_TEMPLATE_PLACEHOLDERS
 
@@ -202,6 +204,17 @@ def _check_generated_agents_no_placeholders(output_dir: Path) -> list[dict[str, 
     return checks
 
 
+def _check_recipes_load(builder_dir: Path) -> list[dict[str, str]]:
+    recipes_dir = builder_dir / "recipes"
+    if not recipes_dir.exists():
+        return [_check("WARN", "recipes dir", f"{recipes_dir} not found — recipe library disabled")]
+    try:
+        recipes = load_all_recipes(recipes_dir)
+    except RecipeError as e:
+        return [_check("FAIL", "recipes load", str(e))]
+    return [_check("OK", "recipes load", f"{len(recipes)} recipe(s) loaded")]
+
+
 def run_health_check(
     repo_root: Path,
     registry_file: str = DEFAULT_REGISTRY,
@@ -234,6 +247,9 @@ def run_health_check(
 
     # 7. Generated agents have no unfilled placeholders.
     checks.extend(_check_generated_agents_no_placeholders(output_dir))
+
+    # 8. Recipes load cleanly.
+    checks.extend(_check_recipes_load(builder_dir))
 
     exit_code = 1 if any(c["status"] == "FAIL" for c in checks) else 0
     return checks, exit_code
