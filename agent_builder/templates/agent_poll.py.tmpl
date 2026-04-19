@@ -420,7 +420,7 @@ async def main():
 
     async with ClaudeSDKClient(options=options) as client:
         print(f"\n  {AGENT_NAME} ready — listening for incoming messages.\n")
-        poll_source = {{poll_source_expr}}
+{{poll_source_expr}}
         async for incoming in poll_source:
             logger.info(
                 "incoming: sender=%s text=%s media=%s",

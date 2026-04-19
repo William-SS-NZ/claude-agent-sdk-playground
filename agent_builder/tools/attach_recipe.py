@@ -108,6 +108,18 @@ def _attach_tool_recipe(
     dst = recipes_dir / f"{_slug_to_module(recipe.name)}.py"
     dst.write_text(src.read_text(encoding="utf-8"), encoding="utf-8")
 
+    # If this recipe is a poll source, claim the manifest slot. Only one
+    # recipe may expose a poll source per agent — a conflicting claim fails
+    # here before anything is written to the manifest.
+    if recipe.poll_source:
+        if manifest.poll_source and manifest.poll_source != recipe.name:
+            return _error(
+                f"Cannot attach poll-source recipe '{recipe.name}': agent "
+                f"'{agent_dir.name}' already has poll source "
+                f"'{manifest.poll_source}'. Only one poll source per agent."
+            )
+        manifest.poll_source = recipe.name
+
     # Update manifest: drop any prior entry for this recipe (version change),
     # then append the new one.
     if existing is not None:

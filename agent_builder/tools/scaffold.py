@@ -23,9 +23,12 @@ _TEMPLATE_BY_MODE = {
 # Stubs filled when no recipe supplies poll_source. Keeps generated agents
 # syntactically valid so they can be run (will raise NotImplementedError when
 # the poll loop starts, with a helpful message).
+# The expr stub carries its own 8-space indent so it sits correctly inside
+# the `async with ClaudeSDKClient(...)` block — re-renders keep this indent.
 _POLL_SOURCE_IMPORT_STUB = ""
 _POLL_SOURCE_EXPR_STUB = (
-    "_stub_poll_source()  # attach a poll recipe (e.g. telegram-poll) to replace this"
+    "        poll_source = _stub_poll_source()"
+    "  # attach a poll recipe (e.g. telegram-poll) to replace"
 )
 _POLL_SOURCE_STUB_IMPL = '''
 async def _stub_poll_source():
@@ -249,10 +252,25 @@ async def scaffold_agent(args: dict[str, Any], output_base: str = "output") -> d
     )
 
     if mode == "poll":
+        # Wrap the default stub values in marker pairs so `render_agent` can
+        # locate and rewrite them when a poll-source recipe is attached later.
+        # Both markers sit at column 0 — Python tolerates comment lines at any
+        # indent inside a function body, and keeping them flat makes the regex
+        # round-trip in render.py indent-agnostic.
+        poll_import_block = (
+            "# <<poll_source_import>>\n"
+            f"{_POLL_SOURCE_IMPORT_STUB}\n"
+            "# <</poll_source_import>>"
+        )
+        poll_expr_block = (
+            "# <<poll_source_expr>>\n"
+            f"{_POLL_SOURCE_EXPR_STUB}\n"
+            "# <</poll_source_expr>>"
+        )
         agent_py = (
             agent_py
-            .replace("{{poll_source_import}}", _POLL_SOURCE_IMPORT_STUB)
-            .replace("{{poll_source_expr}}", _POLL_SOURCE_EXPR_STUB)
+            .replace("{{poll_source_import}}", poll_import_block)
+            .replace("{{poll_source_expr}}", poll_expr_block)
         )
 
     # Fail loudly if any placeholder survived — the generated agent.py would

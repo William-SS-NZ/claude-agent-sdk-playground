@@ -49,3 +49,33 @@ def test_manifest_rejects_duplicate_recipe_names(tmp_path):
 def test_manifest_missing_file_returns_empty(tmp_path):
     m = load_manifest(tmp_path / "nonexistent.json", agent_name="x", builder_version="0.9.0")
     assert m.recipes == []
+
+
+def test_manifest_poll_source_roundtrips(tmp_path):
+    m = empty_manifest(agent_name="x", builder_version="0.9.0")
+    m.poll_source = "telegram-poll"
+    save_manifest(tmp_path / ".recipe_manifest.json", m)
+    loaded = load_manifest(tmp_path / ".recipe_manifest.json")
+    assert loaded.poll_source == "telegram-poll"
+
+
+def test_manifest_poll_source_default_empty(tmp_path):
+    m = empty_manifest(agent_name="x", builder_version="0.9.0")
+    assert m.poll_source == ""
+    save_manifest(tmp_path / ".recipe_manifest.json", m)
+    loaded = load_manifest(tmp_path / ".recipe_manifest.json")
+    assert loaded.poll_source == ""
+
+
+def test_manifest_load_tolerates_missing_poll_source_field(tmp_path):
+    # Pre-existing manifest written without the poll_source field should load cleanly.
+    raw = {
+        "manifest_version": 1,
+        "agent_name": "x",
+        "builder_version": "0.9.0",
+        "recipes": [],
+        "components": [],
+    }
+    (tmp_path / ".recipe_manifest.json").write_text(json.dumps(raw), encoding="utf-8")
+    loaded = load_manifest(tmp_path / ".recipe_manifest.json")
+    assert loaded.poll_source == ""

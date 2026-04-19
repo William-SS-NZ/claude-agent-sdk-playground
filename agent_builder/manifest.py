@@ -37,6 +37,10 @@ class Manifest:
     builder_version: str = ""
     recipes: list[AttachedRecipe] = field(default_factory=list)
     components: list[AttachedComponent] = field(default_factory=list)
+    # Name of the attached recipe that supplies the poll-source async generator.
+    # Empty string when the agent runs in CLI mode or no poll recipe is attached.
+    # Exactly one recipe may claim this slot — attach_recipe enforces.
+    poll_source: str = ""
 
 
 def empty_manifest(agent_name: str, builder_version: str) -> Manifest:
@@ -69,6 +73,8 @@ def load_manifest(path: Path, *, agent_name: str = "", builder_version: str = ""
         builder_version=data.get("builder_version", ""),
         recipes=recipes,
         components=components,
+        # Tolerate pre-existing manifests without the field — default to empty.
+        poll_source=data.get("poll_source", "") or "",
     )
 
 

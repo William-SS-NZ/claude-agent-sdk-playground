@@ -107,3 +107,30 @@ when_to_use: x
 """
     with pytest.raises(RecipeError, match="version"):
         parse_recipe_md(content, source_path="/fake/RECIPE.md")
+
+
+def test_parse_poll_source_field_true():
+    content = """---
+name: telegram-poll
+type: tool
+version: 0.1.0
+description: x
+when_to_use: x
+poll_source: true
+---
+"""
+    recipe = parse_recipe_md(content, source_path="/fake/RECIPE.md")
+    assert recipe.poll_source is True
+
+
+def test_parse_poll_source_defaults_false():
+    content = """---
+name: hello-world
+type: tool
+version: 0.1.0
+description: x
+when_to_use: x
+---
+"""
+    recipe = parse_recipe_md(content, source_path="/fake/RECIPE.md")
+    assert recipe.poll_source is False

@@ -44,6 +44,11 @@ class Recipe:
     oauth_scopes: list[str] = field(default_factory=list)
     allowed_tools_patterns: list[str] = field(default_factory=list)
     tags: list[str] = field(default_factory=list)
+    # Optional: when true, this recipe exposes an async generator that can
+    # drive a poll-mode agent's main loop. Only one poll_source recipe may be
+    # attached to a given agent. v0.9 hardcodes the exported function name to
+    # `telegram_poll_source`; v0.10 will read it from recipe frontmatter.
+    poll_source: bool = False
     body: str = ""
     source_path: str = ""
 
@@ -99,6 +104,12 @@ def parse_recipe_md(content: str, *, source_path: str) -> Recipe:
     )
     tags = _parse_string_list(data.get("tags", []), "tags", source_path)
 
+    poll_source_raw = data.get("poll_source", False)
+    if not isinstance(poll_source_raw, bool):
+        raise RecipeError(
+            f"{source_path}: 'poll_source' must be a boolean (got {type(poll_source_raw).__name__})"
+        )
+
     return Recipe(
         name=name,
         type=type_,
@@ -109,6 +120,7 @@ def parse_recipe_md(content: str, *, source_path: str) -> Recipe:
         oauth_scopes=oauth_scopes,
         allowed_tools_patterns=allowed_tools_patterns,
         tags=tags,
+        poll_source=poll_source_raw,
         body=body,
         source_path=source_path,
     )

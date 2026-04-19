@@ -14,6 +14,7 @@ env_keys:
 allowed_tools_patterns:
   - mcp__agent_tools__telegram_send
 tags: [telegram, messaging, poll]
+poll_source: true
 ---
 
 # Telegram Poll

@@ -102,3 +102,63 @@ async def test_attach_rejects_path_traversal(agent_dir):
         recipes_root=FIXTURES,
     )
     assert result["is_error"] is True
+
+
+@pytest.fixture
+def poll_agent_dir(tmp_path):
+    """Scaffold a poll-mode agent so we can attach poll-capable recipes."""
+    from agent_builder.tools.scaffold import scaffold_agent
+    import asyncio
+    out = tmp_path / "output"
+    out.mkdir()
+    asyncio.run(scaffold_agent(
+        {"agent_name": "poll-agent", "description": "poll", "mode": "poll"},
+        output_base=str(out),
+    ))
+    return out / "poll-agent"
+
+
+@pytest.mark.asyncio
+async def test_attach_telegram_poll_sets_manifest_poll_source(poll_agent_dir):
+    """Attaching a poll_source recipe records it in manifest.poll_source and
+    rewrites agent.py to import telegram_poll_source from the _recipes module."""
+    from agent_builder.recipes.loader import default_recipes_root
+
+    result = await attach_recipe(
+        {"agent_name": "poll-agent", "recipe_name": "telegram-poll"},
+        output_base=str(poll_agent_dir.parent),
+        recipes_root=default_recipes_root(),
+    )
+    assert result.get("is_error") is not True, result["content"][0]["text"]
+
+    manifest = json.loads((poll_agent_dir / MANIFEST_FILENAME).read_text(encoding="utf-8"))
+    assert manifest["poll_source"] == "telegram-poll"
+
+    agent_py = (poll_agent_dir / "agent.py").read_text(encoding="utf-8")
+    assert "from _recipes.telegram_poll import telegram_poll_source" in agent_py
+    # The stub expression should be gone — actual poll source takes its place.
+    assert "_stub_poll_source()" not in agent_py.split("poll_source =", 1)[-1].splitlines()[0]
+    # The actual poll-source call line appears.
+    assert "telegram_poll_source()" in agent_py
+
+
+@pytest.mark.asyncio
+async def test_attach_second_poll_source_errors(poll_agent_dir):
+    """Only one poll source per agent — second attach of a different
+    poll_source recipe must fail with is_error."""
+    from agent_builder.recipes.loader import default_recipes_root
+    from agent_builder.manifest import Manifest, AttachedRecipe, save_manifest, load_manifest
+
+    # Pretend another poll recipe was already attached by hand-editing the manifest.
+    manifest_path = poll_agent_dir / MANIFEST_FILENAME
+    m = load_manifest(manifest_path, agent_name="poll-agent")
+    m.poll_source = "some-other-poll-recipe"
+    save_manifest(manifest_path, m)
+
+    result = await attach_recipe(
+        {"agent_name": "poll-agent", "recipe_name": "telegram-poll"},
+        output_base=str(poll_agent_dir.parent),
+        recipes_root=default_recipes_root(),
+    )
+    assert result["is_error"] is True
+    assert "poll source" in result["content"][0]["text"].lower()

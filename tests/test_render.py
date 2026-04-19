@@ -70,6 +70,70 @@ async def test_render_with_tool_recipe_emits_import_and_server_entry(tmp_path):
     assert '"telegram-poll": "0.1.0"' in agent_py  # in RECIPE_PINS
 
 
+@pytest.mark.asyncio
+async def test_render_fills_poll_source_from_manifest(tmp_path):
+    """Poll-mode agent rendered with manifest.poll_source = "telegram-poll"
+    emits the correct import and expression in place of the stub."""
+    from agent_builder.tools.scaffold import scaffold_agent
+    out = tmp_path / "output"
+    out.mkdir()
+    await scaffold_agent(
+        {"agent_name": "pa", "description": "x", "mode": "poll"},
+        output_base=str(out),
+    )
+    agent_dir = out / "pa"
+
+    # Fake _recipes/telegram_poll.py — render doesn't need the full recipe to test rendering.
+    (agent_dir / "_recipes").mkdir(exist_ok=True)
+    (agent_dir / "_recipes" / "telegram_poll.py").write_text(
+        'from claude_agent_sdk import create_sdk_mcp_server\n'
+        'async def telegram_poll_source():\n'
+        '    if False: yield None\n'
+        'tools_server = create_sdk_mcp_server(name="telegram_poll", version="0.1.0", tools=[])\n',
+        encoding="utf-8",
+    )
+
+    manifest = Manifest(
+        agent_name="pa",
+        builder_version="0.9.0",
+        recipes=[AttachedRecipe(
+            name="telegram-poll", type="tool", version="0.1.0", attached_at="2026-04-20",
+        )],
+        poll_source="telegram-poll",
+    )
+    save_manifest(agent_dir / ".recipe_manifest.json", manifest)
+
+    render_agent(agent_dir)
+
+    agent_py = (agent_dir / "agent.py").read_text(encoding="utf-8")
+    assert "from _recipes.telegram_poll import telegram_poll_source" in agent_py
+    assert "telegram_poll_source()" in agent_py
+    # Stub expression gone from assignment line.
+    assign_line = next(l for l in agent_py.splitlines() if l.lstrip().startswith("poll_source ="))
+    assert "_stub_poll_source" not in assign_line
+
+
+@pytest.mark.asyncio
+async def test_render_poll_source_default_stub_when_unset(tmp_path):
+    """When manifest.poll_source is empty, render emits the stub call."""
+    from agent_builder.tools.scaffold import scaffold_agent
+    out = tmp_path / "output"
+    out.mkdir()
+    await scaffold_agent(
+        {"agent_name": "pb", "description": "x", "mode": "poll"},
+        output_base=str(out),
+    )
+    agent_dir = out / "pb"
+
+    manifest = Manifest(agent_name="pb", builder_version="0.9.0")
+    save_manifest(agent_dir / ".recipe_manifest.json", manifest)
+
+    render_agent(agent_dir)
+
+    agent_py = (agent_dir / "agent.py").read_text(encoding="utf-8")
+    assert "_stub_poll_source()" in agent_py
+
+
 def test_render_preserves_user_additions_slot(tmp_path):
     agent_dir = _scaffolded_agent_sync(tmp_path)
     manifest = Manifest(agent_name="a", builder_version="0.9.0")

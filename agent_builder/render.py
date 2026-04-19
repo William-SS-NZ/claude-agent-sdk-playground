@@ -67,13 +67,47 @@ def _render_agent_py(agent_dir: Path, manifest: Manifest) -> None:
     pins_dict = {r.name: r.version for r in manifest.recipes}
     pins_block = "RECIPE_PINS = " + json.dumps(dict(sorted(pins_dict.items())))
 
-    # Atomic substitution — all four blocks filled from manifest state.
+    poll_import_block, poll_expr_block = _poll_source_blocks(manifest)
+
+    # Atomic substitution — all blocks filled from manifest state.
     content = _replace_block(content, "recipe_imports_block", imports_block)
     content = _replace_block(content, "recipe_servers_block", servers_block)
     content = _replace_block(content, "external_mcp_block", external_block)
     content = _replace_block(content, "recipe_pins_block", pins_block)
+    content = _replace_block(content, "poll_source_import", poll_import_block)
+    content = _replace_block(content, "poll_source_expr", poll_expr_block)
 
     agent_py.write_text(content, encoding="utf-8")
+
+
+def _poll_source_blocks(manifest: Manifest) -> tuple[str, str]:
+    """Return (import_line, assignment_expression) for the poll source wiring.
+
+    - When manifest.poll_source is empty, emit the local stub call so
+      poll-mode agents are still runnable (they raise NotImplementedError
+      with a helpful message at first iteration).
+    - When set, import the recipe's `telegram_poll_source` function from
+      `_recipes.<module>`. v0.9 hardcodes this function name — v0.10 will
+      read it from the recipe's frontmatter.
+
+    The expression line is emitted with its 8-space indent already baked
+    in so it remains syntactically correct inside the `async with`
+    block on subsequent renders (render.py's `_replace_block` doesn't
+    re-indent the replacement body).
+    """
+    if not manifest.poll_source:
+        return (
+            "",
+            "        poll_source = _stub_poll_source()"
+            "  # attach a poll-capable recipe to replace",
+        )
+    mod = _slug_to_module(manifest.poll_source)
+    return (
+        f"from _recipes.{mod} import telegram_poll_source  "
+        f"# poll source (recipe: {manifest.poll_source})",
+        f"        poll_source = telegram_poll_source()"
+        f"  # recipe: {manifest.poll_source}",
+    )
 
 
 def _replace_block(content: str, block_name: str, new_value: str) -> str:
