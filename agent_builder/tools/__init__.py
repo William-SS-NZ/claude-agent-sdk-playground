@@ -13,6 +13,7 @@ from agent_builder.tools.self_heal import propose_self_change_tool
 from agent_builder.tools.edit_agent import edit_agent_tool
 from agent_builder.tools.rollback import rollback_tool
 from agent_builder.tools.list_recipes import list_recipes_tool
+from agent_builder.tools.attach_recipe import attach_recipe_tool
 
 builder_tools_server = create_sdk_mcp_server(
     name="builder_tools",
@@ -28,5 +29,6 @@ builder_tools_server = create_sdk_mcp_server(
         edit_agent_tool,
         rollback_tool,
         list_recipes_tool,
+        attach_recipe_tool,
     ],
 )
