@@ -22,10 +22,6 @@ Safety:
   ``<target_basename>.bak-<timestamp>``. This prevents restoring an
   unrelated backup (e.g. ``AGENT.md.bak-...`` over ``tools.py``) and
   prevents traversal via the backup_name argument.
-
-TODO: AGENT.md should mention this tool — a separate agent is editing
-AGENT.md in parallel, so this docstring leaves a breadcrumb rather than
-touching that file directly.
 """
 
 import re
