@@ -123,6 +123,7 @@ def _build_options() -> ClaudeAgentOptions:
         "mcp__builder_tools__propose_self_change",
         "mcp__builder_tools__edit_agent",
         "mcp__builder_tools__rollback",
+        "mcp__builder_tools__list_recipes",
         "Read", "Write", "Edit", "Glob", "Grep", "Bash",
     ]
     # Web access for design research — look up current API docs, verify
