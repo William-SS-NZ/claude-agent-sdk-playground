@@ -20,7 +20,11 @@ from typing import Any
 from agent_builder.recipes.loader import load_all_recipes
 from agent_builder.recipes.schema import RecipeError
 from agent_builder.tools.registry import DEFAULT_REGISTRY, REQUIRED_AGENT_FILES
-from agent_builder.tools.scaffold import REQUIRED_PLACEHOLDERS as EXPECTED_TEMPLATE_PLACEHOLDERS
+from agent_builder.tools.scaffold import (
+    REQUIRED_PLACEHOLDERS as EXPECTED_TEMPLATE_PLACEHOLDERS,
+    REQUIRED_PLACEHOLDERS_BY_MODE,
+    _TEMPLATE_BY_MODE,
+)
 
 BUILDER_IDENTITY_FILES = ("AGENT.md", "SOUL.md", "MEMORY.md")
 
@@ -137,24 +141,36 @@ def _check_builder_identity(builder_dir: Path) -> list[dict[str, str]]:
     return checks
 
 
-def _check_template_placeholders(builder_dir: Path) -> dict[str, str]:
-    """Verify the scaffold template still contains every expected placeholder."""
-    template_path = builder_dir / "templates" / "agent_main.py.tmpl"
-    if not template_path.exists():
-        return _check("FAIL", "scaffold template", f"missing: {template_path}")
-    content = template_path.read_text(encoding="utf-8")
-    missing = [ph for ph in EXPECTED_TEMPLATE_PLACEHOLDERS if ph not in content]
-    if missing:
-        return _check(
-            "FAIL",
-            "scaffold template placeholders",
-            f"{template_path} is missing: {missing}",
-        )
-    return _check(
-        "OK",
-        "scaffold template placeholders",
-        f"all {len(EXPECTED_TEMPLATE_PLACEHOLDERS)} placeholders present",
-    )
+def _check_template_placeholders(builder_dir: Path) -> list[dict[str, str]]:
+    """Verify every scaffold template still contains its expected placeholders.
+
+    Each mode (cli, poll, …) has its own template and its own required-
+    placeholder tuple. One check per mode so template drift for any single
+    mode shows up clearly in the doctor output.
+    """
+    checks: list[dict[str, str]] = []
+    for mode, fname in _TEMPLATE_BY_MODE.items():
+        template_path = builder_dir / "templates" / fname
+        name = f"template: {fname}"
+        if not template_path.exists():
+            checks.append(_check("FAIL", name, f"missing: {template_path}"))
+            continue
+        content = template_path.read_text(encoding="utf-8")
+        expected = REQUIRED_PLACEHOLDERS_BY_MODE[mode]
+        missing = [ph for ph in expected if ph not in content]
+        if missing:
+            checks.append(_check(
+                "FAIL",
+                name + " placeholders",
+                f"{template_path} is missing: {missing}",
+            ))
+        else:
+            checks.append(_check(
+                "OK",
+                name + " placeholders",
+                f"all {len(expected)} present",
+            ))
+    return checks
 
 
 def _check_agent_md_template(builder_dir: Path) -> list[dict[str, str]]:
@@ -239,8 +255,8 @@ def run_health_check(
     # 4. Builder identity files.
     checks.extend(_check_builder_identity(builder_dir))
 
-    # 5. Scaffold template placeholders intact.
-    checks.append(_check_template_placeholders(builder_dir))
+    # 5. Scaffold template placeholders intact (one check per mode template).
+    checks.extend(_check_template_placeholders(builder_dir))
 
     # 6. AGENT.md slot template intact.
     checks.extend(_check_agent_md_template(builder_dir))
