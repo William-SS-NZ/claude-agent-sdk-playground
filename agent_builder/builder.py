@@ -25,6 +25,7 @@ import argparse
 import asyncio
 import json
 import logging
+import os
 import sys
 import time
 import traceback
@@ -112,26 +113,29 @@ def _phase_banner(tool_name: str, seen: set[str]) -> str | None:
 
 
 def _build_options() -> ClaudeAgentOptions:
+    allowed_tools = [
+        "mcp__builder_tools__scaffold_agent",
+        "mcp__builder_tools__write_identity",
+        "mcp__builder_tools__write_tools",
+        "mcp__builder_tools__test_agent",
+        "mcp__builder_tools__registry",
+        "mcp__builder_tools__remove_agent",
+        "mcp__builder_tools__propose_self_change",
+        "mcp__builder_tools__edit_agent",
+        "mcp__builder_tools__rollback",
+        "Read", "Write", "Edit", "Glob", "Grep", "Bash",
+    ]
+    # Web access for design research — look up current API docs, verify
+    # library/tool names, check best practices before designing tools and
+    # writing identity files. Off by default so pasted URLs in discovery
+    # don't trigger arbitrary outbound fetches in untrusted environments.
+    if os.environ.get("ENABLE_WEB_TOOLS") == "1":
+        allowed_tools.extend(["WebFetch", "WebSearch"])
     return ClaudeAgentOptions(
         setting_sources=["project"],
         cwd=str(BUILDER_DIR),
         mcp_servers={"builder_tools": builder_tools_server},
-        allowed_tools=[
-            "mcp__builder_tools__scaffold_agent",
-            "mcp__builder_tools__write_identity",
-            "mcp__builder_tools__write_tools",
-            "mcp__builder_tools__test_agent",
-            "mcp__builder_tools__registry",
-            "mcp__builder_tools__remove_agent",
-            "mcp__builder_tools__propose_self_change",
-            "mcp__builder_tools__edit_agent",
-            "mcp__builder_tools__rollback",
-            "Read", "Write", "Edit", "Glob", "Grep", "Bash",
-            # Web access for design research — look up current API docs,
-            # verify library/tool names, check best practices before
-            # designing tools and writing identity files.
-            "WebFetch", "WebSearch",
-        ],
+        allowed_tools=allowed_tools,
         permission_mode="acceptEdits",
         max_turns=50,
         max_budget_usd=5.00,

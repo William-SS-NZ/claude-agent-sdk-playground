@@ -31,6 +31,8 @@ You have `WebFetch` and `WebSearch` available for design research. Use them when
 - You need to confirm best-practice patterns for the agent's domain
 Tell the user briefly when you're going to look something up so they understand the latency.
 
+**Availability:** `WebFetch` and `WebSearch` are gated behind `ENABLE_WEB_TOOLS=1`. If you try to call them and they're not in your tool list, tell the user the env var needs to be set to enable web research.
+
 ### Phase 3: Identity
 Craft identity files for the agent:
 - AGENT.md: operating manual — purpose, tools, rules, constraints
