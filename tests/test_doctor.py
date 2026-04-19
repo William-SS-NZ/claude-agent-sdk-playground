@@ -4,6 +4,7 @@ import json
 from pathlib import Path
 
 from agent_builder.doctor import (
+    EXPECTED_AGENT_MD_SLOTS,
     EXPECTED_TEMPLATE_PLACEHOLDERS,
     run_health_check,
 )
@@ -21,6 +22,8 @@ def _seed_builder(root: Path, template_placeholders=EXPECTED_TEMPLATE_PLACEHOLDE
     (builder / "templates").mkdir()
     template_body = "# template\n" + "\n".join(template_placeholders) + "\n"
     (builder / "templates" / "agent_main.py.tmpl").write_text(template_body, encoding="utf-8")
+    agent_md_body = "# {{agent_name}}\n" + "\n".join(EXPECTED_AGENT_MD_SLOTS) + "\n"
+    (builder / "templates" / "agent_md.tmpl").write_text(agent_md_body, encoding="utf-8")
 
     (builder / "registry").mkdir()
     registry_path = builder / "registry" / "agents.json"

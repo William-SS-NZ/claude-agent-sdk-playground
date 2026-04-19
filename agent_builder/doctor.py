@@ -22,6 +22,17 @@ from agent_builder.tools.scaffold import REQUIRED_PLACEHOLDERS as EXPECTED_TEMPL
 
 BUILDER_IDENTITY_FILES = ("AGENT.md", "SOUL.md", "MEMORY.md")
 
+EXPECTED_AGENT_MD_SLOTS = (
+    "{{slot:purpose}}",
+    "{{slot:workflow}}",
+    "{{slot:constraints}}",
+    "{{slot:tools_reference}}",
+    "{{slot:examples}}",
+    "{{slot:first_run_setup}}",
+    "{{slot:builder_agent_additions}}",
+    "{{slot:user_additions}}",
+)
+
 _UNFILLED_PLACEHOLDER = re.compile(r"\{\{[^}]+\}\}")
 
 
@@ -144,6 +155,17 @@ def _check_template_placeholders(builder_dir: Path) -> dict[str, str]:
     )
 
 
+def _check_agent_md_template(builder_dir: Path) -> list[dict[str, str]]:
+    path = builder_dir / "templates" / "agent_md.tmpl"
+    if not path.exists():
+        return [_check("FAIL", "agent_md template", f"missing: {path}")]
+    content = path.read_text(encoding="utf-8")
+    missing = [s for s in EXPECTED_AGENT_MD_SLOTS if s not in content]
+    if missing:
+        return [_check("FAIL", "agent_md slots", f"missing slots: {missing}")]
+    return [_check("OK", "agent_md slots", f"all {len(EXPECTED_AGENT_MD_SLOTS)} present")]
+
+
 def _check_generated_agents_no_placeholders(output_dir: Path) -> list[dict[str, str]]:
     """Every output/<name>/agent.py must be free of unfilled {{...}} placeholders."""
     checks: list[dict[str, str]] = []
@@ -207,7 +229,10 @@ def run_health_check(
     # 5. Scaffold template placeholders intact.
     checks.append(_check_template_placeholders(builder_dir))
 
-    # 6. Generated agents have no unfilled placeholders.
+    # 6. AGENT.md slot template intact.
+    checks.extend(_check_agent_md_template(builder_dir))
+
+    # 7. Generated agents have no unfilled placeholders.
     checks.extend(_check_generated_agents_no_placeholders(output_dir))
 
     exit_code = 1 if any(c["status"] == "FAIL" for c in checks) else 0
