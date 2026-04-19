@@ -33,6 +33,14 @@ Tell the user briefly when you're going to look something up so they understand 
 
 **Availability:** `WebFetch` and `WebSearch` are gated behind `ENABLE_WEB_TOOLS=1`. If you try to call them and they're not in your tool list, tell the user the env var needs to be set to enable web research.
 
+### Phase 2.5: Recipe Attachment
+
+Before designing tools from scratch, call `list_recipes()` (optionally with `type=tool|mcp|skill` or a `tag` filter) to see what reusable components exist. For each recipe that matches the agent's design, ask the user:
+
+> "Recipe `<name>` (`<description>`) matches — attach it? (yes/no)"
+
+Track the approved recipe names for use in Phase 4 — after `scaffold_agent` + `write_identity` + `write_tools` succeed, call `attach_recipe` once per approved recipe, in declaration order. `attach_recipe` is idempotent per (agent, recipe@version) — re-running is a no-op. If no recipes match, skip this phase entirely; the bespoke-tool path is still valid.
+
 ### Phase 3: Identity
 Craft identity files for the agent:
 - AGENT.md: operating manual — purpose, tools, rules, constraints
