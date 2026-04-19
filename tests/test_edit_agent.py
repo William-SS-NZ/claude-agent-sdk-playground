@@ -64,7 +64,7 @@ async def test_edit_agent_replaces_tools_with_header(output_base: Path):
     assert "is_error" not in result
     new = (agent_dir / "tools.py").read_text(encoding="utf-8")
     assert "# brand new tools" in new
-    assert "TEST_MODE = False" in new  # header prepended
+    assert "def _test_mode()" in new  # header prepended
     assert "from claude_agent_sdk" in new
 
 

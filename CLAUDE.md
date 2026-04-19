@@ -94,10 +94,10 @@ Both are inlined into `agent_main.py.tmpl` so generated agents ship with the sam
 ### Generated-agent contract
 
 Tools generated for new agents must:
-- Include an `if TEST_MODE:` branch at the top returning mock data (so `test_agent` can exercise them offline)
+- Include an `if _test_mode():` branch at the top returning mock data (so `test_agent` can exercise them offline). `_test_mode()` reads `AGENT_TEST_MODE` env var; `TOOLS_HEADER` provides the helper.
 - Return `{"content": [{"type": "text", "text": ...}]}`; signal failure with `is_error: True` rather than raising
 - End `tools.py` with a `create_sdk_mcp_server(...)` call bound to the name `tools_server` (that's what `agent.py` and `test_agent` import)
-- Omit imports and the `TEST_MODE = False` line — `write_tools` prepends them
+- Omit imports and the `_test_mode()` helper — `write_tools` prepends them
 
 The generated `agent.py` (from `templates/agent_main.py.tmpl`) wires a `PreToolUse` hook (`safety_hook`) on `Bash`, `Write`, and `Edit` — blocks destructive Bash patterns (`rm -rf /`, `DROP TABLE`, `DELETE FROM`, `> /dev/sda`, fork bomb) and refuses writes to sensitive paths (`.env`, `.git/`, `pyproject.toml`, `package.json`, `.ssh/`, `id_rsa`, `id_ed25519`, `credentials`). Template placeholders: `{{agent_name}}`, `{{agent_description}}`, `{{builder_version}}`, `{{tools_list}}`, `{{allowed_tools_list}}`, `{{permission_mode}}`, `{{max_turns}}`, `{{max_budget_usd}}`, `{{cli_args_block}}`, `{{cli_dispatch_block}}`, `{{cli_help_epilog}}`. Scaffold validates every expected placeholder is present in the template AND that none survive substitution before writing — a drift in either direction fails loudly rather than producing broken Python.
 

@@ -13,6 +13,7 @@ so failures can be diagnosed after the fact.
 import ast
 import importlib.util
 import logging
+import os
 import sys
 import time
 import traceback
@@ -32,14 +33,7 @@ from claude_agent_sdk import (
 from agent_builder.utils import build_claude_md
 
 
-def _set_test_mode(tools_py_path: Path, enabled: bool) -> None:
-    """Flip TEST_MODE in a tools.py file."""
-    content = tools_py_path.read_text(encoding="utf-8")
-    if enabled:
-        content = content.replace("TEST_MODE = False", "TEST_MODE = True")
-    else:
-        content = content.replace("TEST_MODE = True", "TEST_MODE = False")
-    tools_py_path.write_text(content, encoding="utf-8")
+TEST_MODE_ENV_VAR = "AGENT_TEST_MODE"
 
 
 def _load_tools_server(tools_py_path: Path) -> Any:
@@ -250,7 +244,7 @@ async def test_agent(args: dict[str, Any], output_base: str = "output") -> dict[
             "is_error": True,
         }
 
-    _set_test_mode(tools_py_path, enabled=True)
+    os.environ[TEST_MODE_ENV_VAR] = "1"
     try:
         try:
             tools_server = _load_tools_server(tools_py_path)
@@ -292,7 +286,7 @@ async def test_agent(args: dict[str, Any], output_base: str = "output") -> dict[
             ))
 
     finally:
-        _set_test_mode(tools_py_path, enabled=False)
+        os.environ.pop(TEST_MODE_ENV_VAR, None)
         sys.modules.pop("generated_tools", None)
 
     passed = sum(1 for r in results if r["status"] == "pass")
@@ -318,7 +312,7 @@ async def test_agent(args: dict[str, Any], output_base: str = "output") -> dict[
 # MCP tool registration
 test_agent_tool = tool(
     "test_agent",
-    "Run a generated agent in mock mode (TEST_MODE=True) to verify it works. "
+    "Run a generated agent in mock mode (AGENT_TEST_MODE=1) to verify it works. "
     "Accepts test_prompts as either a list of strings or a list of "
     "{prompt: str, expected_tools: [str]} objects. Pass criteria: ResultMessage "
     "success, no permission_denials, no errors, at least one custom-tool call, "
