@@ -14,6 +14,8 @@ import ast
 import importlib.util
 import logging
 import os
+import re
+import subprocess
 import sys
 import time
 import traceback
@@ -211,6 +213,16 @@ async def _run_one_prompt(
 
 async def test_agent(args: dict[str, Any], output_base: str = "output") -> dict[str, Any]:
     agent_name = args["agent_name"]
+    mode = args.get("mode", "cli")
+
+    if mode == "poll":
+        return await _test_agent_poll(args, output_base)
+    if mode != "cli":
+        return {
+            "content": [{"type": "text", "text": f"Invalid mode '{mode}'. Expected 'cli' or 'poll'."}],
+            "is_error": True,
+        }
+
     test_prompts_raw = args["test_prompts"]
     max_turns = args.get("max_turns", 10)
     # test_prompts can be list[str] or list[{prompt, expected_tools}]
@@ -309,14 +321,237 @@ async def test_agent(args: dict[str, Any], output_base: str = "output") -> dict[
     }
 
 
+# --- Poll-mode test harness ---------------------------------------------------
+#
+# test_agent(mode="poll", messages=[...]) exercises a poll-mode agent's
+# `async for incoming in poll_source:` loop against synthetic input without
+# touching Claude. The harness:
+#   1. writes _poll_source_test_stub.py into the agent dir — an async generator
+#      that yields Incoming records built from the supplied `messages`,
+#   2. backs up agent.py to agent.py.bak-testrun, then rewrites its body so
+#      the `async with ClaudeSDKClient(...)` block is replaced with a direct
+#      iteration that prints each received message and exits cleanly,
+#   3. runs `python agent.py` as a subprocess with AGENT_TEST_MODE=1,
+#   4. captures stdout / stderr / exit code,
+#   5. always restores agent.py and deletes the stub in a `finally` block.
+
+
+_POLL_STUB_FILENAME = "_poll_source_test_stub.py"
+_POLL_AGENT_BAK_FILENAME = "agent.py.bak-testrun"
+
+
+def _poll_stub_contents(messages: list[dict[str, Any]]) -> str:
+    """Build the source for _poll_source_test_stub.py given a message list.
+
+    `messages` is a list of dicts with at minimum (sender_id, chat_id, text);
+    media_refs and raw are optional and default empty.
+    """
+    return (
+        "\"\"\"Synthetic poll source — written by test_agent for mode='poll'.\"\"\"\n"
+        "from dataclasses import dataclass, field\n"
+        "\n"
+        "@dataclass\n"
+        "class Incoming:\n"
+        "    sender_id: int\n"
+        "    chat_id: int\n"
+        "    text: str\n"
+        "    media_refs: list = field(default_factory=list)\n"
+        "    raw: dict = field(default_factory=dict)\n"
+        "\n"
+        f"_MESSAGES = {messages!r}\n"
+        "\n"
+        "async def test_poll_source():\n"
+        "    for m in _MESSAGES:\n"
+        "        yield Incoming(**m)\n"
+    )
+
+
+def _rewrite_agent_py_for_poll_test(agent_py: Path) -> None:
+    """Rewrite the poll-mode agent.py so the main loop iterates the test stub
+    and skips the real ClaudeSDKClient entirely.
+
+    Locates the `async with ClaudeSDKClient(...) as client:` block and replaces
+    everything from that line through the end of `main()` with a minimal loop
+    that prints each message and then returns. Imports / safety hook / identity
+    setup are left alone so import-time failures still surface.
+    """
+    content = agent_py.read_text(encoding="utf-8")
+
+    # Inject the stub import next to the existing poll_source_import marker.
+    content = re.sub(
+        r"(# <<poll_source_import>>\n)(.*?)(\n# <</poll_source_import>>)",
+        r"\1from _poll_source_test_stub import test_poll_source, Incoming\n\3",
+        content,
+        count=1,
+        flags=re.DOTALL,
+    )
+
+    shim = (
+        "    # --- test harness override (AGENT_TEST_MODE=1) ---\n"
+        "    _count = 0\n"
+        "    async for incoming in test_poll_source():\n"
+        "        _count += 1\n"
+        "        print(f\"test_agent.poll: received message {_count} from sender={incoming.sender_id}\", flush=True)\n"
+        "    print(f\"test_agent.poll: processed {_count} messages\", flush=True)\n"
+        "    return\n"
+    )
+
+    # Drop everything between the `async with ClaudeSDKClient(...)` line and
+    # the module-level `if __name__` sentinel.
+    pattern = re.compile(
+        r"    async with ClaudeSDKClient\(options=options\).*?(?=\nif __name__)",
+        re.DOTALL,
+    )
+    new_content, n = pattern.subn(shim.rstrip() + "\n", content)
+    if n != 1:
+        raise RuntimeError(
+            "test_agent.poll: could not locate ClaudeSDKClient block in agent.py — "
+            "template drift?"
+        )
+    agent_py.write_text(new_content, encoding="utf-8")
+
+
+async def _test_agent_poll(args: dict[str, Any], output_base: str) -> dict[str, Any]:
+    agent_name = args["agent_name"]
+    messages = args.get("messages")
+
+    if not messages or not isinstance(messages, list):
+        return {
+            "content": [{"type": "text", "text": (
+                "mode='poll' requires 'messages': a non-empty list of "
+                "{sender_id, chat_id, text} dicts."
+            )}],
+            "is_error": True,
+        }
+
+    agent_dir = Path(output_base) / agent_name
+    tools_py_path = agent_dir / "tools.py"
+    agent_py_path = agent_dir / "agent.py"
+
+    if not tools_py_path.exists() or not agent_py_path.exists():
+        return {
+            "content": [{"type": "text", "text": f"Agent files missing at {agent_dir}"}],
+            "is_error": True,
+        }
+
+    logger = _setup_logger(agent_dir)
+    logger.info("###### POLL TEST RUN for '%s' — %d messages ######",
+                agent_name, len(messages))
+
+    # Rebuild CLAUDE.md so the subprocess agent loads its identity.
+    try:
+        build_claude_md(source_dir=str(agent_dir), output_dir=str(agent_dir))
+    except FileNotFoundError as e:
+        logger.error("identity build failed: %s", e)
+        return {
+            "content": [{"type": "text", "text": f"Identity file missing: {e}"}],
+            "is_error": True,
+        }
+
+    stub_path = agent_dir / _POLL_STUB_FILENAME
+    backup_path = agent_dir / _POLL_AGENT_BAK_FILENAME
+    original_agent_py = agent_py_path.read_text(encoding="utf-8")
+    backup_path.write_text(original_agent_py, encoding="utf-8")
+
+    stub_path.write_text(_poll_stub_contents(messages), encoding="utf-8")
+
+    stdout = ""
+    stderr = ""
+    rc = -1
+    run_error: str | None = None
+    try:
+        try:
+            _rewrite_agent_py_for_poll_test(agent_py_path)
+        except RuntimeError as e:
+            logger.error("rewrite failed: %s", e)
+            return {
+                "content": [{"type": "text", "text": str(e)}],
+                "is_error": True,
+            }
+
+        env = os.environ.copy()
+        env[TEST_MODE_ENV_VAR] = "1"
+
+        try:
+            completed = subprocess.run(
+                [sys.executable, str(agent_py_path)],
+                cwd=str(agent_dir),
+                env=env,
+                capture_output=True,
+                text=True,
+                timeout=30,
+                check=False,
+            )
+            stdout = completed.stdout or ""
+            stderr = completed.stderr or ""
+            rc = completed.returncode
+        except subprocess.TimeoutExpired as e:
+            stdout = (e.stdout or "") if isinstance(e.stdout, str) else ""
+            stderr = (e.stderr or "") if isinstance(e.stderr, str) else ""
+            run_error = "subprocess timed out after 30s"
+            logger.error(run_error)
+
+        logger.info("subprocess rc=%s", rc)
+        if stdout:
+            logger.info("stdout:\n%s", stdout)
+        if stderr:
+            logger.info("stderr:\n%s", stderr)
+
+    finally:
+        # Restore agent.py and clean up the stub + backup.
+        try:
+            agent_py_path.write_text(original_agent_py, encoding="utf-8")
+        except OSError as e:
+            logger.error("failed to restore agent.py: %s", e)
+        for p in (stub_path, backup_path):
+            try:
+                if p.exists():
+                    p.unlink()
+            except OSError as e:  # pragma: no cover — best-effort cleanup
+                logger.warning("failed to remove %s: %s", p, e)
+
+    # Count how many messages the subprocess reported processing — the shim
+    # prints "test_agent.poll: processed N messages" at the end.
+    processed = 0
+    match = re.search(r"test_agent\.poll: processed (\d+) messages", stdout)
+    if match:
+        processed = int(match.group(1))
+
+    failure = run_error is not None or rc != 0 or processed != len(messages)
+
+    lines = [
+        f"Poll test for '{agent_name}': mode=poll messages_sent={len(messages)} "
+        f"processed={processed} rc={rc}"
+    ]
+    if run_error:
+        lines.append(f"  error: {run_error}")
+    if stdout:
+        lines.append(f"  stdout: {_truncate(stdout, 240)}")
+    if stderr:
+        lines.append(f"  stderr: {_truncate(stderr, 240)}")
+    lines.append(f"  log: {agent_dir / 'test-run.log'}")
+
+    return {
+        "content": [{"type": "text", "text": "\n".join(lines)}],
+        "is_error": failure,
+    }
+
+
 # MCP tool registration
 test_agent_tool = tool(
     "test_agent",
     "Run a generated agent in mock mode (AGENT_TEST_MODE=1) to verify it works. "
-    "Accepts test_prompts as either a list of strings or a list of "
-    "{prompt: str, expected_tools: [str]} objects. Pass criteria: ResultMessage "
-    "success, no permission_denials, no errors, at least one custom-tool call, "
-    "and (if supplied) every expected_tools name appears. "
+    "mode='cli' (default): accepts test_prompts and runs each through query() "
+    "with success/denial/error/tool-call pass criteria. "
+    "mode='poll': accepts `messages` (list of {sender_id, chat_id, text} dicts) "
+    "and runs the agent as a subprocess against a synthetic poll source that "
+    "yields them, asserting clean exit + all messages processed. "
     "Writes a timestamped log to output/<agent_name>/test-run.log.",
-    {"agent_name": str, "test_prompts": list, "max_turns": int},
+    {
+        "agent_name": str,
+        "test_prompts": list,
+        "max_turns": int,
+        "mode": str,
+        "messages": list,
+    },
 )(test_agent)
