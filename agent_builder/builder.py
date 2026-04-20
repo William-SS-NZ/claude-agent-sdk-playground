@@ -32,6 +32,17 @@ import traceback
 from datetime import datetime
 from pathlib import Path
 
+# Force UTF-8 on stdout/stderr so the Unicode box-drawing chars, em-dashes,
+# and arrows in our output render on Windows terminals that default to cp1252
+# (which otherwise raises UnicodeEncodeError mid-print and aborts the run).
+# reconfigure() is available on Python 3.7+ TextIOWrapper; wrap in try so
+# redirected / buffered streams don't crash import.
+for _stream in (sys.stdout, sys.stderr):
+    try:
+        _stream.reconfigure(encoding="utf-8", errors="replace")
+    except (AttributeError, OSError):
+        pass
+
 from claude_agent_sdk import (
     ClaudeSDKClient,
     ClaudeAgentOptions,

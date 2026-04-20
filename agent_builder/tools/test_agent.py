@@ -233,7 +233,7 @@ async def test_agent(args: dict[str, Any], output_base: str = "output") -> dict[
         elif isinstance(p, dict):
             prompts.append((p["prompt"], p.get("expected_tools")))
 
-    agent_dir = Path(output_base) / agent_name
+    agent_dir = (Path(output_base) / agent_name).resolve()
     tools_py_path = agent_dir / "tools.py"
 
     if not tools_py_path.exists():
@@ -424,7 +424,13 @@ async def _test_agent_poll(args: dict[str, Any], output_base: str) -> dict[str, 
             "is_error": True,
         }
 
-    agent_dir = Path(output_base) / agent_name
+    # Resolve to absolute upfront: subprocess.run(cwd=...) with a relative path
+    # is resolved against caller's cwd, and `.resolve()` on a relative Path is
+    # likewise caller-cwd-dependent. If an earlier MCP tool call happened to
+    # leave the process cwd elsewhere (e.g. a hook, a library misbehaving),
+    # relative paths here double up. Making both paths absolute eliminates the
+    # class.
+    agent_dir = (Path(output_base) / agent_name).resolve()
     tools_py_path = agent_dir / "tools.py"
     agent_py_path = agent_dir / "agent.py"
 

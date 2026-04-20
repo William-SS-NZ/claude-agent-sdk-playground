@@ -3,9 +3,19 @@
 import asyncio
 import argparse
 import logging
+import sys
 import traceback
 from logging.handlers import RotatingFileHandler
 from pathlib import Path
+
+# Force UTF-8 on stdout/stderr so em-dashes / arrows / box chars don't crash
+# on Windows cp1252 consoles. reconfigure() is Py3.7+ TextIOWrapper; redirected
+# streams fall through safely.
+for _stream in (sys.stdout, sys.stderr):
+    try:
+        _stream.reconfigure(encoding="utf-8", errors="replace")
+    except (AttributeError, OSError):
+        pass
 
 try:
     from dotenv import load_dotenv
