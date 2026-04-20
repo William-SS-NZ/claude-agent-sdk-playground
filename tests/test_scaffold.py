@@ -289,3 +289,72 @@ async def test_scaffold_unknown_mode_errors(tmp_path):
     )
     assert result["is_error"] is True
     assert "mode" in result["content"][0]["text"]
+
+
+@pytest.mark.asyncio
+async def test_scaffold_external_mcps_inlined(tmp_path):
+    out = tmp_path / "output"
+    out.mkdir()
+    result = await scaffold_agent(
+        {
+            "agent_name": "ex",
+            "description": "x",
+            "external_mcps": {
+                "gcal": {
+                    "type": "stdio",
+                    "command": "npx",
+                    "args": ["-y", "@modelcontextprotocol/server-google-calendar"],
+                },
+            },
+        },
+        output_base=str(out),
+    )
+    assert result.get("is_error") is not True, result
+    content = (out / "ex" / "agent.py").read_text()
+    assert '"gcal"' in content
+    assert '"npx"' in content
+
+
+@pytest.mark.asyncio
+async def test_scaffold_external_mcps_malformed_errors(tmp_path):
+    out = tmp_path / "output"
+    out.mkdir()
+    result = await scaffold_agent(
+        {
+            "agent_name": "bad-ext",
+            "description": "x",
+            "external_mcps": {"oops": "not-a-dict"},
+        },
+        output_base=str(out),
+    )
+    assert result["is_error"] is True
+
+
+@pytest.mark.asyncio
+async def test_scaffold_external_mcps_missing_type_errors(tmp_path):
+    out = tmp_path / "output"
+    out.mkdir()
+    result = await scaffold_agent(
+        {
+            "agent_name": "bad-ext2",
+            "description": "x",
+            "external_mcps": {"oops": {"command": "npx"}},
+        },
+        output_base=str(out),
+    )
+    assert result["is_error"] is True
+
+
+@pytest.mark.asyncio
+async def test_scaffold_external_mcps_not_a_dict_errors(tmp_path):
+    out = tmp_path / "output"
+    out.mkdir()
+    result = await scaffold_agent(
+        {
+            "agent_name": "bad-ext3",
+            "description": "x",
+            "external_mcps": "not-a-dict",
+        },
+        output_base=str(out),
+    )
+    assert result["is_error"] is True

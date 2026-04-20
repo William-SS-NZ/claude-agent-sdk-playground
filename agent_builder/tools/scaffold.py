@@ -1,5 +1,6 @@
 """scaffold_agent tool — creates agent directory and boilerplate files."""
 
+import json
 import re
 from pathlib import Path
 from typing import Any
@@ -137,6 +138,11 @@ _CLI_DISPATCH_BLOCK = '''\
 '''
 
 
+def _scaffold_error(msg: str) -> dict[str, Any]:
+    """Return the MCP error shape used throughout scaffold_agent."""
+    return {"content": [{"type": "text", "text": msg}], "is_error": True}
+
+
 def _validate_agent_name(agent_name: str, output_base: str) -> str | None:
     """Validate agent_name and return error message if invalid, None if valid.
 
@@ -182,9 +188,22 @@ async def scaffold_agent(args: dict[str, Any], output_base: str = "output") -> d
             "is_error": True,
         }
 
+    # Validate external_mcps: optional dict of { name: {type: ..., ...} }.
+    # Used by the builder when spinning up an agent that talks to an existing
+    # MCP server directly (no recipe). Rendered inline into the agent.py's
+    # mcp_servers={} dict alongside the agent_tools server.
+    external_mcps = args.get("external_mcps", {})
+    if not isinstance(external_mcps, dict):
+        return _scaffold_error("external_mcps must be a dict")
+    for ext_name, cfg in external_mcps.items():
+        if not isinstance(cfg, dict) or "type" not in cfg:
+            return _scaffold_error(
+                f"external_mcps[{ext_name!r}]: must be a dict with 'type' key"
+            )
+
     error = _validate_agent_name(agent_name, output_base)
     if error:
-        return {"content": [{"type": "text", "text": error}], "is_error": True}
+        return _scaffold_error(error)
 
     agent_dir = Path(output_base) / agent_name
 
@@ -232,6 +251,25 @@ async def scaffold_agent(args: dict[str, Any], output_base: str = "output") -> d
             1,
         )
 
+    # Render external_mcps inline into the mcp_servers={} dict. When empty,
+    # emit only the render-marker pair so future render_agent calls (e.g.
+    # attach_recipe for mcp-type recipes) can find and refill this block.
+    if external_mcps:
+        # json.dumps produces double-quoted Python-compatible dict/list/str
+        # literals — matches the render.py output for consistency.
+        external_entries = "\n            ".join(
+            f'"{ext_name}": {json.dumps(cfg)},'
+            for ext_name, cfg in external_mcps.items()
+        )
+        external_mcp_body = (
+            f"# <<external_mcp_block>>\n            {external_entries}\n"
+            f"            # <</external_mcp_block>>"
+        )
+    else:
+        external_mcp_body = (
+            "# <<external_mcp_block>>\n            # <</external_mcp_block>>"
+        )
+
     agent_py = (
         template
         .replace("{{agent_name}}", agent_name)
@@ -247,7 +285,7 @@ async def scaffold_agent(args: dict[str, Any], output_base: str = "output") -> d
         .replace("{{cli_help_epilog}}", cli_help_epilog)
         .replace("{{recipe_imports_block}}", "# <<recipe_imports_block>>\n# <</recipe_imports_block>>")
         .replace("{{recipe_servers_block}}", "# <<recipe_servers_block>>\n            # <</recipe_servers_block>>")
-        .replace("{{external_mcp_block}}", "# <<external_mcp_block>>\n            # <</external_mcp_block>>")
+        .replace("{{external_mcp_block}}", external_mcp_body)
         .replace("{{recipe_pins_block}}", "# <<recipe_pins_block>>\nRECIPE_PINS = {}\n# <</recipe_pins_block>>")
     )
 
@@ -326,7 +364,11 @@ scaffold_agent_tool = tool(
     "-p/--prompt 'text' and -s/--spec file.json for non-interactive runs. "
     "Set false to ship a chat-only agent. "
     "mode: 'cli' (default) for interactive / CLI agents, 'poll' for long-poll "
-    "workers that react to an incoming-message stream (e.g. Telegram).",
+    "workers that react to an incoming-message stream (e.g. Telegram). "
+    "external_mcps: optional dict mapping server-name -> SDK-shaped config "
+    "(must include 'type' key) rendered inline into the generated agent.py's "
+    "mcp_servers dict — use when wiring a non-recipe MCP server directly. "
+    "Remember to also extend allowed_tools_list with 'mcp__<name>__*' patterns.",
     {
         "type": "object",
         "properties": {
@@ -339,6 +381,7 @@ scaffold_agent_tool = tool(
             "max_budget_usd": {"type": "number"},
             "cli_mode": {"type": "boolean"},
             "mode": {"type": "string", "enum": ["cli", "poll"]},
+            "external_mcps": {"type": "object"},
         },
         "required": ["agent_name", "description"],
     },
