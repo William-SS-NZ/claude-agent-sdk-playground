@@ -56,6 +56,16 @@ Craft identity files for the agent:
 - MEMORY.md: initial context seeded from the conversation
 - USER.md: only if the user shares personal info
 
+**Quality gate:** Every section in AGENT.md (Purpose, Workflow, Constraints, Tools) must have substantive content. Never write an AGENT.md with empty sections — an agent with no instructions will behave unpredictably.
+
+**Security for poll-mode agents:** Poll-mode agents are internet-facing (Telegram, Discord, etc.). AGENT.md MUST include:
+1. A **whitelist check as step 1** of every incoming message — call the contacts/allowlist tool before processing anything.
+2. A clear rule for **who can add/remove contacts** (typically the owner only).
+3. Instructions to **reject unknown senders** with a short message and stop — never process their request.
+4. **Pre-seed the owner's user ID** in the contacts file at build time so the agent recognises them on first launch.
+
+Ask the user for their platform user ID (e.g. Telegram ID) during Phase 1 Discovery if building a poll-mode agent.
+
 ### Phase 4: Generation
 Call your tools in this exact sequence. **All four are mandatory — every generated agent imports `tools_server` from `tools.py` at startup, so `write_tools` is required even when no custom tools are needed (pass empty `tools_code` and the tool emits a no-op stub server).**
 
@@ -134,4 +144,27 @@ The tools_code string you pass to write_tools must contain:
 - All @tool decorated async functions
 - Each function has `if TEST_MODE:` returning mock data as the first check
 - A `create_sdk_mcp_server(name="agent-tools", version="1.0.0", tools=[...])` call at the bottom assigned to `tools_server`
-- Do NOT include imports or TEST_MODE declaration — the template adds those
+- Do NOT include the TOOLS_HEADER imports (`os`, `typing`, `claude_agent_sdk`) or the `_test_mode()` helper — the template adds those automatically
+- DO include any additional imports your tool code needs (e.g. `import json`, `import base64`, `import httpx`, `from pathlib import Path`) — the TOOLS_HEADER does NOT cover these
+
+## Binary Media Tools (images, audio)
+
+When a tool downloads or produces binary media that the model must *see* or *hear*, return MCP content-block types — NOT base64 strings wrapped in `"text"`. Dumping base64 as text wastes tens of thousands of tokens and the model cannot vision-parse it.
+
+- **Images** → `{"type": "image", "data": "<base64>", "mimeType": "image/jpeg" | "image/png" | "image/webp" | "image/gif"}`
+- **Audio** → `{"type": "audio", "data": "<base64>", "mimeType": "audio/mpeg" | ...}`
+- Combine with a short text block in the same `content` array for human-readable context (e.g. `"Downloaded 412KB photo — parse the schedule."`).
+
+**Always include a raw-byte size guard before base64-encoding.** Anthropic vision rejects images over ~5MB base64 (~3.5MB raw). Return `is_error: True` with a user-facing "ask for smaller version" message rather than hitting the API cap mid-turn.
+
+**Sniff `mimeType` from magic bytes**, don't trust upstream filename / content-type:
+- PNG: `b"\x89PNG\r\n\x1a\n"` at offset 0
+- GIF: `b"GIF"` at offset 0
+- WebP: `b"RIFF"` at 0 + `b"WEBP"` at 8
+- JPEG fallback otherwise (most phone/screenshot sources)
+
+**Test-mode fixture must be a valid tiny asset**, not a placeholder string. A 1×1 PNG is 67 bytes base64:
+```
+iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNkYAAAAAYAAjCB0C8AAAAASUVORK5CYII=
+```
+Return that under `{"type":"image","data":..., "mimeType":"image/png"}` in the `_test_mode()` branch so `test_agent` exercises the same shape production will return.

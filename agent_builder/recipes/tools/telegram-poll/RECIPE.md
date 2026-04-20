@@ -1,7 +1,7 @@
 ---
 name: telegram-poll
 type: tool
-version: 0.1.0
+version: 0.1.1
 description: Long-polls Telegram bot API for incoming messages, exposes an async iterator of Incoming records.
 when_to_use: Agent runs in poll mode and should react to Telegram DMs without exposing a public webhook.
 env_keys:

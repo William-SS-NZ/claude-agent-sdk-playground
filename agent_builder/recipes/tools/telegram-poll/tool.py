@@ -62,10 +62,25 @@ async def telegram_poll_source(queue: "asyncio.Queue[Incoming] | None" = None):
     allowed = _allowed_sender_ids()
     q: "asyncio.Queue[Incoming]" = queue if queue is not None else asyncio.Queue()
 
+    # Bounded dedupe set — Telegram occasionally redelivers the same update_id
+    # after transient network errors, and media-group photos arrive as one
+    # update per image (same update_id once, but retries add dupes).
+    # Keep the last 512 update_ids; drop the oldest as new ones arrive.
+    _seen_update_ids: list[int] = []
+    _SEEN_CAP = 512
+
     async def _handle(update, _context):
         msg = update.effective_message
         if msg is None or update.effective_user is None:
             return
+        uid = getattr(update, "update_id", None)
+        if uid is not None:
+            if uid in _seen_update_ids:
+                logger.info("dropped duplicate update_id=%s", uid)
+                return
+            _seen_update_ids.append(uid)
+            if len(_seen_update_ids) > _SEEN_CAP:
+                del _seen_update_ids[: len(_seen_update_ids) - _SEEN_CAP]
         if allowed and update.effective_user.id not in allowed:
             logger.info("ignored message from %s", update.effective_user.id)
             return
@@ -131,6 +146,6 @@ async def telegram_send(args):
 # `tools_server` and wires it into the agent as a dedicated recipe server.
 tools_server = create_sdk_mcp_server(
     name="telegram-poll",
-    version="0.1.0",
+    version="0.1.1",
     tools=[telegram_send],
 )

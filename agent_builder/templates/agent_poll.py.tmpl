@@ -273,12 +273,24 @@ async def main():
                 "incoming: sender=%s text=%s media=%s",
                 incoming.sender_id, incoming.text[:60], len(incoming.media_refs),
             )
-            prompt = (
-                f"New message from sender {incoming.sender_id} in chat {incoming.chat_id}.\n"
-                f"Text: {incoming.text!r}\n"
-                f"Media refs: {incoming.media_refs}\n"
-                f"Respond appropriately."
-            )
+            _has_text = bool(incoming.text and incoming.text.strip())
+            _has_media = bool(incoming.media_refs)
+            if _has_media and not _has_text:
+                prompt = (
+                    f"New message from sender {incoming.sender_id} in chat {incoming.chat_id}.\n"
+                    f"Text: (none — media-only message)\n"
+                    f"Media refs: {incoming.media_refs}\n"
+                    f"The user sent media with no caption. This is a real, actionable message — "
+                    f"do NOT reply that the message is empty. Use the appropriate media-fetch tool "
+                    f"with the file_id from media_refs, then respond based on the media content."
+                )
+            else:
+                prompt = (
+                    f"New message from sender {incoming.sender_id} in chat {incoming.chat_id}.\n"
+                    f"Text: {incoming.text!r}\n"
+                    f"Media refs: {incoming.media_refs}\n"
+                    f"Respond appropriately."
+                )
             try:
                 await client.query(prompt)
                 await _drain_responses(client, verbose)
