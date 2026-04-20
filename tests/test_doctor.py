@@ -221,6 +221,30 @@ def test_doctor_validates_poll_template(tmp_path: Path):
         f"expected a FAIL check mentioning 'poll', got: {[c['name'] for c in fails]}"
 
 
+def test_doctor_fails_on_poll_mode_agent_with_stub_source(tmp_path: Path):
+    """A poll-mode agent whose agent.py still calls `_stub_poll_source()` is
+    broken on launch (raises NotImplementedError). Doctor must FAIL so the
+    user is alerted before they try to run the agent."""
+    registry = _seed_builder(tmp_path)
+    _make_agent_dir(tmp_path / "output", "broken-poll")
+    (tmp_path / "output" / "broken-poll" / "agent.py").write_text(
+        "async def main():\n"
+        "    poll_source = _stub_poll_source()  # no recipe attached\n",
+        encoding="utf-8",
+    )
+    registry.write_text(json.dumps([
+        {"name": "broken-poll", "description": "x", "tools": [], "created": "2026-01-01",
+         "path": "output/broken-poll/", "status": "active"},
+    ]), encoding="utf-8")
+
+    checks, exit_code = run_health_check(tmp_path, registry_file=str(registry))
+    assert exit_code == 1
+    assert any(
+        c["status"] == "FAIL" and "poll_source" in c["name"]
+        for c in checks
+    )
+
+
 def test_doctor_validates_both_templates_ok(tmp_path: Path):
     """With both templates well-formed, doctor reports OK for each."""
     registry = _seed_builder(tmp_path)

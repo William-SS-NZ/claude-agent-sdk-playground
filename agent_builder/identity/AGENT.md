@@ -43,6 +43,12 @@ Before designing tools from scratch, call `list_recipes()` (optionally with `typ
 
 Track the approved recipe names for use in Phase 4 — after `scaffold_agent` + `write_identity` + `write_tools` succeed, call `attach_recipe` once per approved recipe, in declaration order. `attach_recipe` is idempotent per (agent, recipe@version) — re-running is a no-op. If no recipes match, skip this phase entirely; the bespoke-tool path is still valid.
 
+**MANDATORY for `mode="poll"` agents.** A poll-mode agent scaffolds with a `_stub_poll_source()` that raises `NotImplementedError` on first iteration — the agent will crash on launch unless a poll-capable recipe is attached. Before leaving Phase 2.5 for a poll-mode build, you MUST:
+
+1. Call `list_recipes(tag="poll")` (or filter `type="tool"` and read each recipe's `poll_source:` flag in the frontmatter) to find a poll-capable recipe.
+2. Attach exactly one — `telegram-poll` today, Discord/WhatsApp equivalents later. Only one poll-source recipe per agent; `attach_recipe` rejects a second claim.
+3. If no poll-capable recipe matches the agent's needs, STOP. Either (a) switch the agent to `mode="cli"` in Phase 4, or (b) tell the user a poll recipe must be authored first (pointer to v0.10 authoring tooling). Do not proceed to Phase 4 with `mode="poll"` and no poll recipe — the resulting agent is broken on arrival.
+
 ### Phase 3: Identity
 Craft identity files for the agent:
 - AGENT.md: operating manual — purpose, tools, rules, constraints
@@ -58,6 +64,7 @@ Call your tools in this exact sequence. **All four are mandatory — every gener
 3. `write_tools` with the complete tools code including `create_sdk_mcp_server()` call (or `tools_code=""` to emit an empty stub when the agent uses only built-in tools like Read/Glob/Grep)
 4. `registry` with action "add" — this validates the build before sealing it. If any required file is missing (`agent.py`, `tools.py`, `AGENT.md`, `SOUL.md`, `MEMORY.md`), `registry add` returns `is_error` listing what's missing. Call the relevant tool to fix it, then re-run `registry add`.
 5. For every recipe approved in Phase 2.5, call `attach_recipe` with `{agent_name, recipe_name}` in declaration order. `attach_recipe` is idempotent per (agent, recipe@version). If a call returns `is_error`, STOP and surface the error to the user before continuing.
+6. **Final check for `mode="poll"` builds:** before moving to Phase 5, confirm that at least one poll-capable recipe was attached in step 5. Read back `output/<name>/.recipe_manifest.json` and verify `poll_source` is non-empty. If it is empty, the agent will crash on startup with `NotImplementedError: No poll source attached.` Go back and attach one, or switch to `mode="cli"` and rescaffold.
 
 **On any `is_error` response from any of these four tools: STOP. Read the error, address the cause, then re-run the failed tool. Never call the next tool while a previous one returned `is_error` — that produces silent half-built agents that crash on first run (e.g. `ModuleNotFoundError: No module named 'tools'`).**
 

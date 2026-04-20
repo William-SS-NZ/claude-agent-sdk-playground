@@ -220,6 +220,41 @@ def _check_generated_agents_no_placeholders(output_dir: Path) -> list[dict[str, 
     return checks
 
 
+def _check_poll_agents_have_poll_source(output_dir: Path) -> list[dict[str, str]]:
+    """FAIL any poll-mode agent whose agent.py still calls `_stub_poll_source()`.
+
+    A poll-mode agent scaffolds with a stub that raises NotImplementedError on
+    first iteration — the agent is dead on launch until `attach_recipe` wires
+    a real poll source. The stub CALL site (not the def) is only present when
+    nothing replaced it. The builder's Phase 2.5 should prevent this from
+    shipping, but doctor catches any regression or manual edit that leaves an
+    agent in the half-built state.
+    """
+    checks: list[dict[str, str]] = []
+    if not output_dir.exists():
+        return checks
+    for d in output_dir.iterdir():
+        if not d.is_dir():
+            continue
+        agent_py = d / "agent.py"
+        if not agent_py.exists():
+            continue
+        try:
+            content = agent_py.read_text(encoding="utf-8")
+        except OSError:
+            continue
+        # Only poll-mode agents carry the marker; cli-mode agents have no
+        # _stub_poll_source references at all.
+        if "poll_source = _stub_poll_source()" in content:
+            checks.append(_check(
+                "FAIL",
+                f"poll_source: {d.name}",
+                "poll-mode agent has no poll recipe attached — "
+                "will crash on launch. Attach a poll-capable recipe.",
+            ))
+    return checks
+
+
 def _check_recipes_load(builder_dir: Path) -> list[dict[str, str]]:
     recipes_dir = builder_dir / "recipes"
     if not recipes_dir.exists():
@@ -263,6 +298,9 @@ def run_health_check(
 
     # 7. Generated agents have no unfilled placeholders.
     checks.extend(_check_generated_agents_no_placeholders(output_dir))
+
+    # 7a. Poll-mode agents have a poll recipe attached.
+    checks.extend(_check_poll_agents_have_poll_source(output_dir))
 
     # 8. Recipes load cleanly.
     checks.extend(_check_recipes_load(builder_dir))
