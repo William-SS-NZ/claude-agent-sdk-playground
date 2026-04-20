@@ -225,10 +225,62 @@ def _attach_mcp_recipe(
 
     render_agent(agent_dir)
 
+    if recipe.oauth_scopes:
+        try:
+            _render_setup_auth(recipe, agent_dir, recipes_root)
+        except RuntimeError as e:
+            return _error(str(e))
+
     return _ok(
         f"Attached mcp recipe '{recipe.name}@{recipe.version}' to "
         f"{agent_dir.name} via composition."
     )
+
+
+def _render_setup_auth(recipe: Recipe, agent_dir: Path, recipes_root: Path) -> None:
+    """Render the recipe's setup_auth.py.tmpl into the agent dir.
+
+    Only called for mcp-type recipes that declare ``oauth_scopes``. Convention:
+    the first ``env_keys`` entry is the client-secrets path, the second is the
+    token storage path. Fills ``{{scopes}}`` with the Python ``repr`` of the
+    scopes list so the rendered file contains a valid list literal.
+    """
+    tmpl_path = recipes_root / "mcps" / recipe.name / "setup_auth.py.tmpl"
+    tmpl = tmpl_path.read_text(encoding="utf-8")
+
+    if len(recipe.env_keys) < 2:
+        raise RuntimeError(
+            f"{recipe.name}: oauth-capable mcp recipe must declare at least 2 env_keys "
+            "(client_secrets path, token path) in that order"
+        )
+    client_secrets_env = recipe.env_keys[0].name
+    token_path_env = recipe.env_keys[1].name
+
+    rendered = (
+        tmpl
+        .replace("{{scopes}}", repr(recipe.oauth_scopes))
+        .replace("{{client_secrets_env}}", client_secrets_env)
+        .replace("{{token_path_env}}", token_path_env)
+        .replace("{{recipe_name}}", recipe.name)
+    )
+
+    leftover = re.findall(r"\{\{[^}]+\}\}", rendered)
+    if leftover:
+        raise RuntimeError(
+            f"{recipe.name}/setup_auth.py.tmpl: unfilled placeholders after render: {leftover}"
+        )
+
+    (agent_dir / "setup_auth.py").write_text(rendered, encoding="utf-8")
+
+    agent_md = agent_dir / "AGENT.md"
+    if agent_md.exists():
+        existing = agent_md.read_text(encoding="utf-8")
+        banner = (
+            f"\n\n## First-run setup — {recipe.name}\n\n"
+            f"Run `python setup_auth.py` once before starting this agent — grants {recipe.name} access.\n"
+        )
+        if banner not in existing:
+            agent_md.write_text(existing + banner, encoding="utf-8")
 
 
 _ENV_RECIPE_BANNER = re.compile(

@@ -175,6 +175,45 @@ async def test_attach_mcp_recipe_idempotent(agent_dir):
 
 
 @pytest.mark.asyncio
+async def test_attach_gcal_writes_setup_auth_py(tmp_path):
+    """E3: mcp recipe with oauth_scopes -> setup_auth.py rendered + AGENT.md banner."""
+    from agent_builder.tools.scaffold import scaffold_agent
+    out = tmp_path / "output"
+    out.mkdir()
+    await scaffold_agent(
+        {"agent_name": "cal-bot", "description": "x"},
+        output_base=str(out),
+    )
+    # Overwrite tools.py + AGENT.md with minimal versions the attach path accepts.
+    (out / "cal-bot" / "tools.py").write_text(
+        'from claude_agent_sdk import tool, create_sdk_mcp_server\n'
+        'TEST_MODE = False\n'
+        'tools_server = create_sdk_mcp_server(name="agent-tools", version="0.1.0", tools=[])\n',
+        encoding="utf-8",
+    )
+    (out / "cal-bot" / "AGENT.md").write_text("# Agent\n\nTest.\n", encoding="utf-8")
+
+    result = await attach_recipe(
+        {"agent_name": "cal-bot", "recipe_name": "google-calendar"},
+        output_base=str(out),
+        # Default recipes_root — uses the real bundled recipe.
+    )
+    assert result.get("is_error") is not True, result
+    setup_py = out / "cal-bot" / "setup_auth.py"
+    assert setup_py.exists()
+    content = setup_py.read_text()
+    assert "https://www.googleapis.com/auth/calendar" in content
+    assert "{{scopes}}" not in content
+    assert "{{client_secrets_env}}" not in content
+    assert "{{token_path_env}}" not in content
+    assert "{{recipe_name}}" not in content
+    # Handoff banner appended to AGENT.md
+    agent_md = (out / "cal-bot" / "AGENT.md").read_text()
+    assert "First-run setup" in agent_md
+    assert "google-calendar" in agent_md
+
+
+@pytest.mark.asyncio
 async def test_attach_second_poll_source_errors(poll_agent_dir):
     """Only one poll source per agent — second attach of a different
     poll_source recipe must fail with is_error."""

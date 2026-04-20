@@ -11,6 +11,12 @@ env_keys:
   - name: GOOGLE_OAUTH_TOKEN_PATH
     description: Where setup_auth.py writes the refresh token JSON (gitignored by default).
     example: ./token.json
+  - name: GOOGLE_OAUTH_CREDENTIALS
+    description: Upstream alias — point at the same file as GOOGLE_OAUTH_CLIENT_SECRETS so the MCP subprocess finds the credentials under whichever env var it expects.
+    example: ./credentials.json
+  - name: GOOGLE_CALENDAR_MCP_TOKEN_PATH
+    description: Upstream alias — point at the same file as GOOGLE_OAUTH_TOKEN_PATH so the MCP subprocess reads the token from the same place setup_auth.py wrote it.
+    example: ./token.json
 oauth_scopes:
   - https://www.googleapis.com/auth/calendar
 allowed_tools_patterns:
