@@ -1,9 +1,13 @@
-"""Tests for the inlined build_claude_md in agent_main.py.tmpl.
+"""End-to-end wiring tests for build_claude_md as used by generated agents.
 
-The template carries its own copy of build_claude_md so scaffolded agents can
-run standalone. That copy drifted once before (silently skipping missing
-required files instead of raising). These tests import the template as a real
-module and exercise its build_claude_md directly to catch any future drift.
+Pre-R6 the template carried a copy-paste of build_claude_md that drifted from
+the canonical version in agent_builder.utils (once silently skipping missing
+required files instead of raising). R6 dedupes by having the template import
+from agent_builder.utils directly.
+
+These tests render the template, import it as a module, and call
+`module.build_claude_md(agent_dir=...)` — which exercises both the re-export
+wiring and the util's behavior (write + section order + missing-file raise).
 """
 
 import importlib.util
@@ -81,7 +85,7 @@ def test_template_build_claude_md_writes_file_with_header(rendered_agent):
     module, agent_dir = rendered_agent
     _seed_required_identity(agent_dir)
 
-    module.build_claude_md()
+    module.build_claude_md(agent_dir=agent_dir)
 
     claude_md = agent_dir / "CLAUDE.md"
     assert claude_md.exists()
@@ -93,7 +97,7 @@ def test_template_build_claude_md_includes_required_sections(rendered_agent):
     module, agent_dir = rendered_agent
     _seed_required_identity(agent_dir)
 
-    module.build_claude_md()
+    module.build_claude_md(agent_dir=agent_dir)
 
     content = (agent_dir / "CLAUDE.md").read_text(encoding="utf-8")
     assert "You are a template test agent." in content
@@ -106,7 +110,7 @@ def test_template_build_claude_md_includes_user_md_when_present(rendered_agent):
     _seed_required_identity(agent_dir)
     (agent_dir / "USER.md").write_text("# User\nName: William", encoding="utf-8")
 
-    module.build_claude_md()
+    module.build_claude_md(agent_dir=agent_dir)
 
     content = (agent_dir / "CLAUDE.md").read_text(encoding="utf-8")
     assert "Name: William" in content
@@ -118,7 +122,7 @@ def test_template_build_claude_md_skips_missing_user_md(rendered_agent):
     assert not (agent_dir / "USER.md").exists()
 
     # Must not raise.
-    module.build_claude_md()
+    module.build_claude_md(agent_dir=agent_dir)
 
     content = (agent_dir / "CLAUDE.md").read_text(encoding="utf-8")
     assert "# User" not in content
@@ -133,4 +137,4 @@ def test_template_build_claude_md_raises_when_agent_md_missing(rendered_agent):
     (agent_dir / "MEMORY.md").write_text("# Memory\nSeed context.", encoding="utf-8")
 
     with pytest.raises(FileNotFoundError):
-        module.build_claude_md()
+        module.build_claude_md(agent_dir=agent_dir)
