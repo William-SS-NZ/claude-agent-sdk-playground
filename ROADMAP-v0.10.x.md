@@ -1,118 +1,122 @@
 # v0.10.x Roadmap
 
-> Consolidated from `docs/superpowers/specs/2026-04-20-agent-builder-v0.10-authoring-and-components-design.md`,
-> `docs/superpowers/plans/2026-04-20-agent-builder-v0.10-authoring-and-components.md`,
-> `CHANGELOG.md` deferrals, and `TODO.md` PR #1 review section.
+> **Scope discipline.** The maximalist v0.10 plan lives in `docs/superpowers/plans/2026-04-20-agent-builder-v0.10-authoring-and-components.md` and the matching spec. It's preserved for when library scale justifies it. **This file is the actual ship target** — a deliberately narrower cut based on the 2026-04-21 scrutiny pass.
 >
-> **Last built:** 2026-04-21 (post-PR #1 merge, HEAD `cb2d8e5`).
+> **Why narrower:** Recipe library is 2 recipes used by 1 agent. The maximalist plan (~6,500 LOC, 4 new tools, maturity tiers, auto-save heuristic, self-heal, audit log) is governance infrastructure for a library at 15+ recipes with multiple authors. Building it now is premature. Everything beyond the core — maturity tiers, auto-save, clone, self-heal, audit log, doctor/statusbar — is **evidence-gated**: ships when the library grows enough to warrant it, not on a calendar date.
+>
+> **Last built:** 2026-04-21 (post-PR #1 merge, HEAD `cac6f2b`).
 
 ---
 
-## v0.10.0 — Authoring Layer + Components (headline release)
+## v0.9.2 — Skill recipes + AGENT.md slot migration *(next release)*
 
-Turn the builder from *composer* (picks from hand-authored recipes) into *assembler-with-authoring-powers* (creates, clones, edits recipes as part of every build). Adds a lightweight `components/` recipe type for frequently reused code/markdown snippets.
+Smallest meaningful release. Unblocks recipe-driven AGENT.md additions which are currently skipped by the `_render_agent_md` guard shipped in v0.9.0.
 
-**Branch:** `feat/v0.10-authoring-and-components` (create when starting).
-**Spec:** `docs/superpowers/specs/2026-04-20-agent-builder-v0.10-authoring-and-components-design.md`
-**Plan:** `docs/superpowers/plans/2026-04-20-agent-builder-v0.10-authoring-and-components.md`
+- [ ] **Skill recipe type** (`type: skill`) — prose injection into AGENT.md. Phase G of the v0.9 plan. `RECIPE.md` + `skill.md` siblings only — no env keys, no tool patterns.
+- [ ] **AGENT.md slot-migration-on-first-attach.** When `attach_recipe` runs against a slot-less AGENT.md, wrap existing body in `<!-- SLOT: builder_agent_additions -->` on a one-shot opt-in path. Pairs with skill recipes — no point in skill injection if the target file has no slot to inject into. Writes `.bak-<ts>` (matches the v0.9.0 data-loss guard contract).
+- [ ] **One shipped skill recipe** to prove the shape. Candidate: `parse-hours-to-events` (already referenced in v0.9 spec §G).
 
-### Phase A — Component type *(new recipe kind)*
-- [ ] A1: Version bump `0.10.0.dev0`, create `feat/v0.10-authoring-and-components`
-- [ ] A2: `Component` schema (frontmatter-in-comment-header, `.py` and `.md` shapes)
-- [ ] A3: Component loader (shares validation with recipe loader)
-- [ ] A4: `list_recipes` surfaces `type="component"`
-
-### Phase B — `attach_component`
-- [ ] B1: New tool — materialises a component into agent files (target + slot semantics)
-- [ ] B2: `render_agent` honors AGENT.md component injections
-- [ ] B3: Register `attach_component` in builder MCP server
-
-### Phase C — Maturity tiers
-- [ ] C1: `maturity: in-dev | experimental | stable` added to `Recipe` schema
-- [ ] C2: `list_recipes` hides `in-dev`, shows maturity badge
-- [ ] C3: `attach_recipe` refuses `in-dev`, warns on `experimental`
-
-### Phase D — `create_recipe` + Auto-Save Heuristic
-- [ ] D1: `recipe-audit.log` writer (every library-modifying action)
-- [ ] D2: `create_recipe` tool (TDD)
-- [ ] D3: Auto-save heuristic (green-flag / red-flag defaults; builder AGENT.md Phase 2 update)
-- [ ] D4: Register `create_recipe`
-
-### Phase E — `clone_recipe`
-- [ ] E1: `clone_recipe` with auto-slug generator + collision suffix
-
-### Phase F — `edit_recipe` + Self-Heal Integration
-- [ ] F1: `edit_recipe` tool (`.bak-<ts>` + session-scoped edit allowlist)
-- [ ] F2: Phase-5 `test_agent` self-heal loop — cap 3 attempts per recipe per session
-
-### Phase G — Doctor + Statusbar
-- [ ] G1: Doctor validates components + reports `recipe-audit.log` activity counts
-- [ ] G2: Statusbar emits one-liner on every recipe write during a build
-
-### Phase H — Release
-- [ ] H1: End-to-end smoke (session creates 1 recipe, clones 1, attaches 3, uses 1 component)
-- [ ] H2: Update top-level CLAUDE.md
-- [ ] H3: PR + merge
+**Est.:** ~500 LOC, one focused PR. Branch: `feat/v0.9.2-skill-recipes`.
 
 ---
 
-## Blocking prerequisites
+## v0.9.3 — Server mode *(demand-gated)*
 
-Deferred out of v0.9.0 and flagged in `CHANGELOG.md#090---2026-04-20` + `TODO.md`. Ship before v0.10.0 work begins.
+Only ship if someone asks for it. Partially specced in v0.9 design §F. Otherwise skip straight to v0.10.0.
 
-- [ ] **v0.9.1 — `server` mode template.** FastAPI webhook receiver. Own sub-plan exists (§C1 of v0.9 recipes-and-server spec). Template must validate against the same `REQUIRED_PLACEHOLDERS_BY_MODE` doctor check.
-- [ ] **v0.9.2 — Skill recipes.** `type: skill` prose injection into `AGENT.md` (Phase G of v0.9 plan). Paired with **AGENT.md slot-migration on first attach** (tracked in `TODO.md`): today's `_render_agent_md` guard skips slot-less AGENT.mds for safety; skill recipes need those slots populated, so the migration step has to land alongside.
-- [ ] **v0.9.x — `edit_agent --resync-recipes`.** Compares `RECIPE_PINS` against current recipe versions, offers per-recipe updates. Blocks the authoring layer because clone/edit cycles will churn versions faster than today.
+- [ ] `templates/agent_server.py.tmpl` — FastAPI webhook receiver.
+- [ ] `scaffold_agent(mode="server")` — refuses to scaffold without a webhook-capable recipe (matches poll-mode's recipe-required guard).
+- [ ] Doctor validation via `REQUIRED_PLACEHOLDERS_BY_MODE["server"]`.
+- [ ] `test_agent(mode="server")` — synthetic webhook POSTs.
+
+**Est.:** ~1,500 LOC. Branch: `feat/v0.9.3-server-mode`.
 
 ---
 
-## v0.10.x patch candidates (non-blocking polish)
+## v0.10.0 — Authoring via tool *extension*, not tool *addition* *(cut-down ship target)*
 
-From `TODO.md` PR #1 review + general polish queue. Tickable in any order after v0.10.0.
+**Headline change from the maximalist plan:** instead of 4 new builder tools, extend the 3 existing ones with a `target="recipe"` mode. Instead of a new `components/` type with its own loader, support single-file recipes under the existing recipe loader. Drop maturity tiers, auto-save heuristic, self-heal, audit log, statusbar, clone, and doctor extensions — those are v0.10.1+ candidates, evidence-gated.
+
+### Phase A — Extend existing tools with `target="recipe"`
+- [ ] **A1**: Version bump `0.10.0.dev0`, branch `feat/v0.10-authoring-minimal`.
+- [ ] **A2**: Extend `scaffold_agent` — add `target: "agent" | "recipe"` kwarg. When `"recipe"`, writes `recipes/<type>/<slug>/RECIPE.md` + sibling template files instead of `output/<name>/`. Reuses slug validation, path-traversal guard.
+- [ ] **A3**: Extend `edit_agent` — add `target: "agent" | "recipe"` kwarg. When `"recipe"`, resolves paths relative to the recipe dir. Reuses `.bak-<ts>` contract, sub-second collision abort, rollback integration.
+- [ ] **A4**: Extend `write_tools` or scrap it for recipe use — recipe `tool.py` body-writing already has the same shape as per-agent `tools.py`. Single code path.
+
+**Why extension beats addition:** zero new backup logic, zero new validation, zero new rollback integration. Same tests apply. Same permission surface. Builder's AGENT.md gains 3 paragraphs, not 4 tool-use descriptions.
+
+### Phase B — Single-file components under existing loader
+- [ ] **B1**: Recipe loader accepts single-file shape at `recipes/components/<slug>.{py,md}` with leading YAML frontmatter block (same shape as `RECIPE.md` frontmatter — not the comment-header variant from the maximalist spec). Tool/mcp recipes stay directory-based; components are the only single-file kind.
+- [ ] **B2**: `attach_recipe` reads `component` type and materialises into target agent files. `target:` + `slot:` fields in the component's frontmatter drive where it lands. No new `attach_component` tool — one code path.
+- [ ] **B3**: `render_agent` honors AGENT.md slot injections from attached components. **Prerequisite:** v0.9.2 slot-migration lands first, otherwise injection targets empty.
+
+### Phase C — Release
+- [ ] **C1**: End-to-end smoke — builder session authors one new recipe via `scaffold_agent(target="recipe")`, attaches it to a fresh agent, tests pass.
+- [ ] **C2**: Update top-level `CLAUDE.md` with the target-kwarg extension pattern.
+- [ ] **C3**: PR + merge.
+
+**Est.:** ~1,500 LOC instead of 6,500. One reviewer can audit in an afternoon.
+
+---
+
+## v0.10.1+ — Evidence-gated additions
+
+Each item below ships **only** when its gating condition is observed. No calendar dates. If the condition never fires, the feature never ships.
+
+| Deferred feature | Gate condition | Maximalist plan phase |
+|---|---|---|
+| `clone_recipe` tool | User manually copies a recipe directory 3+ times in a month, OR asks for it | E |
+| Maturity tiers (`in-dev` / `experimental` / `stable`) | Library reaches ≥ 10 recipes AND someone requests hiding work-in-progress | C |
+| Auto-save heuristic | User authors ≥ 5 recipes and reports "the prompts are getting in the way" | D3 |
+| `recipe-audit.log` | Auto-save ships (and only then — log exists to make auto-save auditable) | D1 |
+| Self-heal-during-test loop | ≥ 3 test failures caused by just-created recipes, AND manual fix is demonstrably painful | F2 |
+| Doctor extensions + statusbar | Library reaches ≥ 10 recipes | G |
+| `remove_recipe` | First recipe needs deletion | (not in maximalist plan) |
+| `detach_recipe` / `detach_component` | First user wants to undo an attach | (deferred per spec §13) |
+| `edit_agent --resync-recipes` | Two recipe-version bumps land while at least one agent has the old pin | (v0.9 spec §307) |
+
+**Rule:** each gate is a written-down observation. Add it to this file when spotted. Don't ship because it would be nice — ship because it hurts.
+
+---
+
+## v0.10.x patch backlog (polish, non-blocking)
+
+From `TODO.md` PR #1 review. Order by utility-per-LOC, not blocking order.
 
 - [ ] `telegram_send` caches one `Application` per bot token instead of spinning one up per message.
 - [ ] `.poll_state.json` persistent dedupe cache for `telegram-poll` (survives restart, not just in-process LRU).
-- [ ] `remove_recipe` tool (deferred from v0.10 acceptance criteria; GC for the growing library).
-- [ ] `detach_recipe` / `detach_component` (spec §13, deferred).
-- [ ] PR-body smoke-test checkboxes discipline (PR #1 left 3 unchecked at merge — tick off retroactively or on next PR).
-- [ ] PR size discipline — recipe library, composition retrofit, poll mode, skill recipes each get their own PR going forward (PR #1 was 12 k lines / 70 files, too wide to review thoroughly).
+- [ ] PR-body smoke-test checkboxes discipline (PR #1 left 3 unchecked at merge).
+- [ ] PR size discipline going forward — recipe library, composition retrofit, poll mode, skill recipes each get their own PR.
 
 ---
 
-## Deferred to v0.11+ (tracked so they don't leak back in)
+## v0.11+ (tracked so they don't leak back in)
 
-Per spec §13:
+Mirrors spec §13. These are deferred *by design*, not by scale.
 
-- Component dependency version constraints (`depends_on` stays name-only in v0.10).
+- Component dependency version constraints (`depends_on` stays name-only until proven insufficient).
 - Recipe marketplace / git-URL fetching / npm-style registry (all recipes remain local and bundled).
-- Multi-recipe-server name-conflict UX (SDK namespacing via `mcp__<server>__<tool>` covers today).
-- Agent-fix-after-edit flow (tied to resync; only surfaces once resync ships).
+- Multi-recipe-server name-conflict UX (SDK's `mcp__<server>__<tool>` namespacing covers today).
+- Agent-fix-after-edit flow (only surfaces once resync ships — which is itself evidence-gated).
 
 ---
 
 ## Acceptance criteria for cutting v0.10.0
 
-Direct from spec §14 — `CHANGELOG.md#0100` unblocked only when every box below flips.
+Narrowed from spec §14. The full maximalist acceptance list remains in the plan file.
 
-- [ ] Recipe type `components/` supported by loader, `list_recipes`, `attach_component`.
-- [ ] Frontmatter-in-comment-header parser handles both `.py` and `.md` component shapes.
-- [ ] Four new builder tools registered: `create_recipe`, `clone_recipe`, `edit_recipe`, `attach_component`.
-- [ ] Auto-save heuristic implemented + documented in builder AGENT.md (Phase 2).
-- [ ] `maturity` frontmatter field enforced in `list_recipes` and `attach_recipe`.
-- [ ] `recipe-audit.log` written on every library-modifying action.
-- [ ] Statusbar log line for each recipe write during a build.
-- [ ] Self-heal of just-created recipe during test, capped at 3 attempts per recipe.
-- [ ] Clone slug auto-generator handles common cases + collision suffix.
-- [ ] Doctor extended to validate components + report audit log activity count.
-- [ ] Full test suite green including `test_create_recipe`, `test_clone_recipe`, `test_edit_recipe`, `test_attach_component`, `test_auto_save_heuristic`, `test_maturity_tiers`, `test_self_heal_capped`.
-- [ ] End-to-end smoke: builder session creates one new recipe, clones an existing one, attaches three, uses one component — agent builds, tests pass.
+- [ ] `scaffold_agent(target="recipe", ...)` creates a valid recipe directory; slug validation + path-traversal guard match agent path.
+- [ ] `edit_agent(target="recipe", ...)` edits recipe files in-place; `.bak-<ts>` + sub-second collision abort match agent edit contract.
+- [ ] Single-file component loader parses frontmatter YAML block from `recipes/components/<slug>.{py,md}`.
+- [ ] `attach_recipe` materialises component into target agent; idempotent per `(agent, component@version)`.
+- [ ] `render_agent` honors component-driven AGENT.md slot injections **(requires v0.9.2 slot-migration)**.
+- [ ] End-to-end: builder authors 1 new recipe, attaches 1 component, agent builds and tests pass.
+- [ ] No regressions in v0.9 test suite (currently 265 tests).
 
 ---
 
-## Known risks (spec §15, worth re-reading before starting Phase D)
+## Historical context
 
-- **Library pollution** — every build saving half-thought-out recipes. Mitigation: conservative auto-save green-flag definition; `maturity: experimental` default for self-authored; future `remove_recipe`.
-- **Self-heal loops** — 3-attempt cap may not be low enough; drop to 2 if pattern emerges.
-- **Clone proliferation** — similar-but-not-quite recipes multiply. Documentation nudges toward edit-in-place over clone for small tweaks.
-- **Auto-save false positives** — builder saves something it shouldn't. Ship `remove_recipe` alongside if seen.
-- **`edit_recipe` scope creep** — builder confusing "I just created this" with "this already existed". Session-scoped allowlist enforced; `user_requested=True` is the only bypass.
+The maximalist v0.10 plan was written 2026-04-20 as a single forward-looking design. It was correct architecturally but premature economically — builds authoring infrastructure for a library that has 2 recipes. This narrower cut keeps the **extension-not-addition** principle while deferring the governance/automation machinery until library scale actually demands it.
+
+If the library grows past ~10 recipes and the `target="recipe"` extension path stops being enough, revisit the maximalist plan — most of it will still apply, just to a library that now justifies it.
