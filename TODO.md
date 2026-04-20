@@ -27,19 +27,24 @@ See `audit.md` for the full findings list and `CHANGELOG.md` for the flagged sec
 - [x] ~~AST regression test for cli_mode wiring~~.
 - [x] ~~Menu options 2-6 short-circuit when registry empty~~.
 
-## High-priority — next release (v0.8.0)
+## Shipped in v0.9.0
 
-Audit deferrals that are worth a dedicated release. See `docs/next-release-plan.md` for the sequenced plan.
+See `CHANGELOG.md#090---2026-04-20` for the full set. The items below are the rollups from the v0.8 backlog that landed as part of the v0.9 release.
 
-- [ ] **Replace `_set_test_mode` file mutation with an env var.** `test_agent.py` currently string-replaces `TEST_MODE = False` → `TEST_MODE = True` inside `tools.py`. If the Python interpreter dies between flip and `finally`, the file stays in test mode; real runs then silently return mock data. Fix: `TEST_MODE = os.environ.get("AGENT_TEST_MODE") == "1"` in the generated `TOOLS_HEADER`; `test_agent` sets the env var for the duration of the test and never touches the file. Unit test: kill-mid-run simulated via `Process.terminate`.
-- [ ] **Dedupe Spinner / format_tool_call / build_claude_md across builder + template.** Three copies today (utils.py, template, test_agent.py), all with observed drift (see `audit.md#2.1`). Ship: generated agents `from agent_builder.utils import ...` at import time. Cost: generated agents carry a runtime dep on `agent_builder`. Benefit: one place to change. Roll `pyproject.toml` entry-points so generated agents declare the dep.
-- [ ] **Consolidate path validators.** Four near-identical implementations (`scaffold._validate_agent_name`, `remove_agent` inline, `rollback._validate_target`, `self_heal._validate_target`) — consolidate into `agent_builder/paths.py::validate_relative_to_base(path, allowed_bases)`. Audit item 6.4.
-- [ ] **Gate `WebFetch` / `WebSearch` behind `ENABLE_WEB_TOOLS=1` env var.** Default off for public build; on by explicit opt-in. Audit item 6.1. Decide before any PyPI publish.
+- [x] ~~Replace `_set_test_mode` file mutation with an env var (R1)~~ — generated `TOOLS_HEADER` reads `AGENT_TEST_MODE`; `test_agent` sets/unsets the env var and never writes `tools.py`. Kill-mid-run no longer leaves stuck test mode.
+- [x] ~~Dedupe Spinner / format_tool_call / build_claude_md across builder + template (R6)~~ — generated agents now `from agent_builder.utils import ...`. Three copies collapsed to one; guard tests in `tests/test_template_imports.py` prevent regression.
+- [x] ~~Consolidate path validators (R5)~~ — `agent_builder/paths.py::validate_relative_to_base`. `scaffold`, `remove_agent`, `rollback`, `self_heal` all delegate.
+- [x] ~~Gate `WebFetch` / `WebSearch` behind `ENABLE_WEB_TOOLS=1` (R2)~~ — off by default, opt-in via env var.
+- [x] ~~Lazy `self_heal` FileHandler (R3)~~ — moved into `propose_self_change`; no handle leak at import time.
+- [x] ~~`_cli_sweep` double-scan (R4)~~ — single scan, retained list, second pass deletes.
+
+## High-priority — next release
+
+Audit deferrals still outstanding.
+
 - [ ] **`python -m build` smoke test.** Verify `PolyForm-Noncommercial-1.0.0` passes modern setuptools license-classifier validation without warnings. Blocks any future PyPI publish.
 - [ ] **`make setup` / one-shot onboarding script** — new contributor clones, runs one command, gets hooks activated + editable install + test run. Currently three manual steps.
 - [ ] **Complexity refactors on `_run_one_query`, `scaffold_agent`, `test_agent`.** Audit items 4.1–4.3. Each splits into 2–3 helpers. Risk: low; diff: chunky.
-- [ ] **Lazy self_heal FileHandler.** Currently opens `self-heal.log` at import time — tests leak handles (audit 3.4). Move into `propose_self_change`.
-- [ ] **`_cli_sweep` double-scan.** Call once, keep the list, delete in a second pass. Audit 3.5.
 
 ## Polish / nice-to-have
 
