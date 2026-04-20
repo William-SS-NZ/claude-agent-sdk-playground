@@ -77,7 +77,23 @@ def _render_agent_py(agent_dir: Path, manifest: Manifest) -> None:
     content = _replace_block(content, "poll_source_import", poll_import_block)
     content = _replace_block(content, "poll_source_expr", poll_expr_block)
 
+    # Strip the `_stub_poll_source()` helper def once a real poll source is
+    # wired up — keeps a grep for `_stub_poll_source` in the generated file
+    # zero-false-positive, so downstream consumers can detect unattached
+    # poll-mode agents with a simple substring check.
+    if manifest.poll_source:
+        content = _strip_stub_impl(content)
+
     agent_py.write_text(content, encoding="utf-8")
+
+
+def _strip_stub_impl(content: str) -> str:
+    """Remove the scaffold-injected `_stub_poll_source` helper block."""
+    pattern = re.compile(
+        r"\n?# <<poll_source_stub_impl>>.*?# <</poll_source_stub_impl>>\n?",
+        re.DOTALL,
+    )
+    return pattern.sub("", content, count=1)
 
 
 def _poll_source_blocks(manifest: Manifest) -> tuple[str, str]:

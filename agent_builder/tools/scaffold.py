@@ -32,12 +32,14 @@ _POLL_SOURCE_EXPR_STUB = (
     "  # attach a poll recipe (e.g. telegram-poll) to replace"
 )
 _POLL_SOURCE_STUB_IMPL = '''
+# <<poll_source_stub_impl>>
 async def _stub_poll_source():
     raise NotImplementedError(
         "No poll source attached. Run: python -m agent_builder.builder "
         "then attach_recipe for this agent with a poll-type recipe."
     )
     yield  # pragma: no cover — make this a generator
+# <</poll_source_stub_impl>>
 '''
 
 # Placeholders common to every template.

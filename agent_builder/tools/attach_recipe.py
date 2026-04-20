@@ -120,6 +120,15 @@ def _attach_tool_recipe(
     dst = recipes_dir / f"{_slug_to_module(recipe.name)}.py"
     dst.write_text(src.read_text(encoding="utf-8"), encoding="utf-8")
 
+    # Tool recipes may also declare env_keys (e.g. telegram-poll needs
+    # TELEGRAM_BOT_TOKEN). Merge them into .env.example before touching the
+    # manifest so a conflict aborts cleanly.
+    if recipe.env_keys:
+        try:
+            _merge_env_example(agent_dir / ".env.example", recipe)
+        except RuntimeError as e:
+            return _error(str(e))
+
     # If this recipe is a poll source, claim the manifest slot. Only one
     # recipe may expose a poll source per agent — a conflicting claim fails
     # here before anything is written to the manifest.
