@@ -4,8 +4,49 @@ from pathlib import Path
 
 import pytest
 
-from agent_builder.render import render_agent
+from agent_builder.render import _slug_to_module, render_agent
 from agent_builder.manifest import Manifest, AttachedRecipe, save_manifest
+
+
+@pytest.mark.asyncio
+async def test_render_external_mcp_block_uses_json_encoding(tmp_path):
+    """external_mcp_block entries must be JSON-encoded (double quotes) to match
+    scaffold.py's external_mcps rendering. ``repr(dict)`` emits single-quoted
+    Python literals which produces byte-diffs on otherwise-identical configs."""
+    import json as _json
+    agent_dir = await _scaffolded_agent(tmp_path)
+    (agent_dir / "_recipes").mkdir(exist_ok=True)
+    cfg = {"type": "stdio", "command": "echo", "args": ["x"]}
+    (agent_dir / "_recipes" / "fake_mcp.mcp.json").write_text(
+        _json.dumps(cfg), encoding="utf-8",
+    )
+    manifest = Manifest(
+        agent_name="a",
+        builder_version="0.9.0",
+        recipes=[AttachedRecipe(
+            name="fake-mcp", type="mcp", version="0.1.0",
+            attached_at="2026-04-20",
+        )],
+    )
+    save_manifest(agent_dir / ".recipe_manifest.json", manifest)
+
+    render_agent(agent_dir)
+
+    agent_py = (agent_dir / "agent.py").read_text()
+    # JSON encoding: double-quoted keys + string values.
+    assert '"fake_mcp": {"type": "stdio"' in agent_py
+    # Must not use Python repr which emits single quotes.
+    assert "'type': 'stdio'" not in agent_py
+
+
+def test_slug_to_module_handles_digit_leading():
+    """Slug regex allows ``^[a-z0-9]...`` but Python module names may not
+    start with a digit — ensure the helper prepends ``_`` so the emitted
+    ``from _recipes.<mod> import ...`` line stays importable."""
+    assert _slug_to_module("telegram-poll") == "telegram_poll"
+    assert _slug_to_module("3rd-party-tool") == "_3rd_party_tool"
+    assert _slug_to_module("9") == "_9"
+    assert _slug_to_module("abc-123") == "abc_123"
 
 
 async def _scaffolded_agent(tmp_path: Path) -> Path:

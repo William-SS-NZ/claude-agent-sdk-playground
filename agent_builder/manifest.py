@@ -1,6 +1,7 @@
 """Agent manifest — source of truth for attached recipes and components."""
 
 import json
+import os
 from dataclasses import asdict, dataclass, field
 from pathlib import Path
 
@@ -79,12 +80,22 @@ def load_manifest(path: Path, *, agent_name: str = "", builder_version: str = ""
 
 
 def save_manifest(path: Path, manifest: Manifest) -> None:
+    """Write the manifest atomically via tmp + os.replace.
+
+    A kill between truncation and the full JSON payload landing would leave
+    the manifest half-written and unparseable. Writing to a sibling tmp file
+    and then os.replace'ing over the target gives an all-or-nothing update —
+    readers always see either the old or the new manifest, never a truncated
+    mix. os.replace is atomic on both POSIX and Windows.
+    """
     path = Path(path)
     data = asdict(manifest)
     # Sort recipes + components alphabetically for stable diffs.
     data["recipes"] = sorted(data["recipes"], key=lambda r: r["name"])
     data["components"] = sorted(data["components"], key=lambda c: (c["target"], c["name"]))
-    path.write_text(json.dumps(data, indent=2) + "\n", encoding="utf-8")
+    tmp = path.with_name(path.name + ".tmp")
+    tmp.write_text(json.dumps(data, indent=2) + "\n", encoding="utf-8")
+    os.replace(tmp, path)
 
 
 def _check_unique(items: list, label: str, path: Path) -> None:

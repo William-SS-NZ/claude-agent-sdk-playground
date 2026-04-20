@@ -7,6 +7,8 @@ from typing import Any
 
 import yaml
 
+from agent_builder.paths import SLUG_PATTERN
+
 
 class RecipeError(ValueError):
     """Raised when a recipe's RECIPE.md is malformed or invalid."""
@@ -18,7 +20,6 @@ class RecipeType(str, Enum):
     SKILL = "skill"
 
 
-_NAME_PATTERN = re.compile(r"^[a-z0-9][a-z0-9-]*$")
 _SEMVER_PATTERN = re.compile(r"^\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?$")
 _FRONTMATTER_PATTERN = re.compile(
     r"\A---\s*\n(.*?)\n---\s*\n?(.*)\Z",
@@ -76,7 +77,7 @@ def parse_recipe_md(content: str, *, source_path: str) -> Recipe:
     _require_keys(data, ("name", "type", "version", "description", "when_to_use"), source_path)
 
     name = data["name"]
-    if not isinstance(name, str) or not _NAME_PATTERN.match(name):
+    if not isinstance(name, str) or not SLUG_PATTERN.match(name):
         raise RecipeError(
             f"{source_path}: name '{name}' invalid (must match ^[a-z0-9][a-z0-9-]*$)"
         )

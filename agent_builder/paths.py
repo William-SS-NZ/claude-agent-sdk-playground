@@ -13,8 +13,15 @@ does NOT distinguish file from directory, and does NOT perform I/O beyond
 ``Path.resolve``. Callers decide the rest.
 """
 
+import re
 from pathlib import Path
 from typing import Iterable
+
+# Shared slug regex for agent names and recipe names. Lowercase alnum + hyphen,
+# alnum-leading. Previously duplicated verbatim in scaffold, attach_recipe, and
+# recipes/schema — consolidated here so a future tightening (e.g. letter-leading
+# to avoid digit-leading slugs colliding with Python module names) lands in one place.
+SLUG_PATTERN = re.compile(r"^[a-z0-9][a-z0-9-]*$")
 
 
 def validate_relative_to_base(

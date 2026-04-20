@@ -26,7 +26,16 @@ def render_agent(agent_dir: Path) -> None:
 
 
 def _slug_to_module(slug: str) -> str:
-    return slug.replace("-", "_")
+    """Convert a recipe/agent slug to a valid Python module name.
+
+    Slugs may start with a digit (SLUG_PATTERN allows ``^[a-z0-9]...``) but
+    Python module names may not — prefix with ``_`` when the slug is
+    digit-leading so ``from _recipes.<mod> import ...`` stays importable.
+    """
+    mod = slug.replace("-", "_")
+    if mod and mod[0].isdigit():
+        mod = "_" + mod
+    return mod
 
 
 def _render_agent_py(agent_dir: Path, manifest: Manifest) -> None:
@@ -61,7 +70,14 @@ def _render_agent_py(agent_dir: Path, manifest: Manifest) -> None:
         if mcp_json.exists():
             cfg = json.loads(mcp_json.read_text(encoding="utf-8"))
             cfg.pop("env_passthrough", None)
-            external_entries.append(f'"{_slug_to_module(r.name)}": {repr(cfg)},')
+            # json.dumps matches scaffold.py's external_mcps encoding — keeps
+            # scaffold-time and render-time output byte-identical for the same
+            # config. Using repr() here historically produced single-quoted
+            # Python literals that diffed against the double-quoted JSON output
+            # scaffold emits directly.
+            external_entries.append(
+                f'"{_slug_to_module(r.name)}": {json.dumps(cfg)},'
+            )
     external_block = "\n            ".join(external_entries)
 
     pins_dict = {r.name: r.version for r in manifest.recipes}

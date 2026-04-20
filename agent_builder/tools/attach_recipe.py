@@ -39,12 +39,10 @@ from agent_builder.manifest import (
     load_manifest,
     save_manifest,
 )
-from agent_builder.paths import validate_relative_to_base
+from agent_builder.paths import SLUG_PATTERN, validate_relative_to_base
 from agent_builder.recipes.loader import default_recipes_root, load_all_recipes
 from agent_builder.recipes.schema import Recipe, RecipeError, RecipeType
 from agent_builder.render import render_agent
-
-_NAME_PATTERN = re.compile(r"^[a-z0-9][a-z0-9-]*$")
 
 
 async def attach_recipe(
@@ -64,7 +62,7 @@ async def attach_recipe(
     if err:
         return _error(err)
 
-    if not _NAME_PATTERN.match(recipe_name):
+    if not SLUG_PATTERN.match(recipe_name):
         return _error(f"Invalid recipe name '{recipe_name}'.")
 
     agent_dir = Path(output_base) / agent_name
@@ -335,8 +333,17 @@ def _merge_env_example(env_path: Path, recipe: Recipe) -> None:
 
 
 def _slug_to_module(slug: str) -> str:
-    """Convert a recipe slug to a valid Python module name."""
-    return slug.replace("-", "_")
+    """Convert a recipe slug to a valid Python module name.
+
+    Slugs may start with a digit (SLUG_PATTERN allows ``^[a-z0-9]...``) but
+    Python module names may not — prefix with ``_`` when the slug is
+    digit-leading. Must stay in lockstep with render._slug_to_module so the
+    two sides agree on the on-disk filename and the import line.
+    """
+    mod = slug.replace("-", "_")
+    if mod and mod[0].isdigit():
+        mod = "_" + mod
+    return mod
 
 
 def _today_iso() -> str:
@@ -358,7 +365,7 @@ def _short_sha() -> str:
 
 def _validate_agent_name(agent_name: str, output_base: str) -> str | None:
     """Slug + path-containment check. Same shape as scaffold/remove_agent."""
-    if not _NAME_PATTERN.match(agent_name):
+    if not SLUG_PATTERN.match(agent_name):
         return (
             f"Invalid agent name '{agent_name}'. "
             "Must match ^[a-z0-9][a-z0-9-]*$."

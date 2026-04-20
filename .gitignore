@@ -41,3 +41,4 @@ agent_builder/CLAUDE.md
 
 # Self-heal backups (made whenever propose_self_change applies a change)
 *.bak-*
+.claude/

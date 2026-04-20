@@ -9,11 +9,11 @@ from claude_agent_sdk import tool
 
 from agent_builder import _version as _builder_version
 from agent_builder.manifest import MANIFEST_FILENAME, empty_manifest, save_manifest
-from agent_builder.paths import validate_relative_to_base
+from agent_builder.paths import SLUG_PATTERN, validate_relative_to_base
 
 TEMPLATES_DIR = Path(__file__).parent.parent / "templates"
 
-NAME_PATTERN = re.compile(r"^[a-z0-9][a-z0-9-]*$")
+NAME_PATTERN = SLUG_PATTERN
 
 # Mode -> template filename. "server" mode arrives in Phase F.
 _TEMPLATE_BY_MODE = {

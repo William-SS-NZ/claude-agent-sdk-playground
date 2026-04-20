@@ -67,6 +67,16 @@ def test_manifest_poll_source_default_empty(tmp_path):
     assert loaded.poll_source == ""
 
 
+def test_save_manifest_is_atomic(tmp_path):
+    """save_manifest writes via tmp + os.replace so readers never see a partial
+    file. After a successful save, the .tmp sibling must not linger."""
+    target = tmp_path / ".recipe_manifest.json"
+    m = empty_manifest(agent_name="x", builder_version="0.9.0")
+    save_manifest(target, m)
+    assert target.exists()
+    assert not (tmp_path / ".recipe_manifest.json.tmp").exists()
+
+
 def test_manifest_load_tolerates_missing_poll_source_field(tmp_path):
     # Pre-existing manifest written without the poll_source field should load cleanly.
     raw = {
