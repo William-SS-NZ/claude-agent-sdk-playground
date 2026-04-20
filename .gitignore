@@ -26,6 +26,17 @@ Thumbs.db
 .env
 .env.local
 
+# Secrets / OAuth credentials (defense-in-depth; output/ already covers per-agent copies)
+token.json
+token*.json
+*.token.json
+client_secret*.json
+*credentials*.json
+*.credentials.json
+*.pem
+*.key
+service-account*.json
+
 # Logs
 *.log
 audit.log
@@ -41,3 +52,4 @@ agent_builder/CLAUDE.md
 
 # Self-heal backups (made whenever propose_self_change applies a change)
 *.bak-*
+.claude/

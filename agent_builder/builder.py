@@ -25,11 +25,23 @@ import argparse
 import asyncio
 import json
 import logging
+import os
 import sys
 import time
 import traceback
 from datetime import datetime
 from pathlib import Path
+
+# Force UTF-8 on stdout/stderr so the Unicode box-drawing chars, em-dashes,
+# and arrows in our output render on Windows terminals that default to cp1252
+# (which otherwise raises UnicodeEncodeError mid-print and aborts the run).
+# reconfigure() is available on Python 3.7+ TextIOWrapper; wrap in try so
+# redirected / buffered streams don't crash import.
+for _stream in (sys.stdout, sys.stderr):
+    try:
+        _stream.reconfigure(encoding="utf-8", errors="replace")
+    except (AttributeError, OSError):
+        pass
 
 from claude_agent_sdk import (
     ClaudeSDKClient,
@@ -45,7 +57,7 @@ from agent_builder.utils import Spinner, build_claude_md, format_tool_call
 from agent_builder.tools import builder_tools_server
 from agent_builder.tools.remove_agent import remove_agent as _remove_agent_fn
 from agent_builder.tools.registry import DEFAULT_REGISTRY as _REGISTRY_PATH
-from agent_builder.cleanup import sweep_artifacts, format_summary as _format_sweep_summary
+from agent_builder.cleanup import sweep_artifacts, delete_swept, format_summary as _format_sweep_summary
 from agent_builder.doctor import run_health_check, format_checks as _format_doctor_checks
 
 
@@ -112,26 +124,31 @@ def _phase_banner(tool_name: str, seen: set[str]) -> str | None:
 
 
 def _build_options() -> ClaudeAgentOptions:
+    allowed_tools = [
+        "mcp__builder_tools__scaffold_agent",
+        "mcp__builder_tools__write_identity",
+        "mcp__builder_tools__write_tools",
+        "mcp__builder_tools__test_agent",
+        "mcp__builder_tools__registry",
+        "mcp__builder_tools__remove_agent",
+        "mcp__builder_tools__propose_self_change",
+        "mcp__builder_tools__edit_agent",
+        "mcp__builder_tools__rollback",
+        "mcp__builder_tools__list_recipes",
+        "mcp__builder_tools__attach_recipe",
+        "Read", "Write", "Edit", "Glob", "Grep", "Bash",
+    ]
+    # Web access for design research — look up current API docs, verify
+    # library/tool names, check best practices before designing tools and
+    # writing identity files. Off by default so pasted URLs in discovery
+    # don't trigger arbitrary outbound fetches in untrusted environments.
+    if os.environ.get("ENABLE_WEB_TOOLS") == "1":
+        allowed_tools.extend(["WebFetch", "WebSearch"])
     return ClaudeAgentOptions(
         setting_sources=["project"],
         cwd=str(BUILDER_DIR),
         mcp_servers={"builder_tools": builder_tools_server},
-        allowed_tools=[
-            "mcp__builder_tools__scaffold_agent",
-            "mcp__builder_tools__write_identity",
-            "mcp__builder_tools__write_tools",
-            "mcp__builder_tools__test_agent",
-            "mcp__builder_tools__registry",
-            "mcp__builder_tools__remove_agent",
-            "mcp__builder_tools__propose_self_change",
-            "mcp__builder_tools__edit_agent",
-            "mcp__builder_tools__rollback",
-            "Read", "Write", "Edit", "Glob", "Grep", "Bash",
-            # Web access for design research — look up current API docs,
-            # verify library/tool names, check best practices before
-            # designing tools and writing identity files.
-            "WebFetch", "WebSearch",
-        ],
+        allowed_tools=allowed_tools,
         permission_mode="acceptEdits",
         max_turns=50,
         max_budget_usd=5.00,
@@ -443,7 +460,8 @@ async def _cli_purge_all(yes: bool) -> int:
 
 
 def _cli_sweep(older_than_days: int, yes: bool) -> int:
-    """Dry-run summary, prompt for confirmation, then delete. No SDK, no cost."""
+    """Single filesystem scan, dry-run summary, prompt, then delete the same
+    set. No SDK, no cost."""
     summary = sweep_artifacts(REPO_ROOT, older_than_days=older_than_days, dry_run=True)
 
     nothing_found = (
@@ -462,7 +480,7 @@ def _cli_sweep(older_than_days: int, yes: bool) -> int:
             print("Aborted.")
             return 1
 
-    sweep_artifacts(REPO_ROOT, older_than_days=older_than_days, dry_run=False)
+    delete_swept(summary)
     print("Swept.")
     return 0
 

@@ -1,0 +1,11 @@
+{
+  "type": "stdio",
+  "command": "npx",
+  "args": ["-y", "@cocal/google-calendar-mcp@2.6.1"],
+  "env_passthrough": [
+    "GOOGLE_OAUTH_CLIENT_SECRETS",
+    "GOOGLE_OAUTH_TOKEN_PATH",
+    "GOOGLE_OAUTH_CREDENTIALS",
+    "GOOGLE_CALENDAR_MCP_TOKEN_PATH"
+  ]
+}

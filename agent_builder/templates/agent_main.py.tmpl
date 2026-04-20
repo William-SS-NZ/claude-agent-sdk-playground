@@ -4,10 +4,18 @@ import asyncio
 import argparse
 import logging
 import sys
-import time
 import traceback
 from logging.handlers import RotatingFileHandler
 from pathlib import Path
+
+# Force UTF-8 on stdout/stderr so em-dashes / arrows / box chars don't crash
+# on Windows cp1252 consoles. reconfigure() is Py3.7+ TextIOWrapper; redirected
+# streams fall through safely.
+for _stream in (sys.stdout, sys.stderr):
+    try:
+        _stream.reconfigure(encoding="utf-8", errors="replace")
+    except (AttributeError, OSError):
+        pass
 
 try:
     from dotenv import load_dotenv
@@ -26,6 +34,20 @@ from claude_agent_sdk import (
     ToolUseBlock,
     HookMatcher,
 )
+
+from contextlib import nullcontext
+
+from agent_builder.utils import (
+    Spinner,
+    format_tool_call,
+    build_claude_md,
+)
+
+# --- recipe servers ---
+{{recipe_imports_block}}
+# --- /recipe servers ---
+
+{{recipe_pins_block}}
 
 AGENT_NAME = "{{agent_name}}"
 GENERATED_WITH_BUILDER_VERSION = "{{builder_version}}"
@@ -48,174 +70,6 @@ if not logger.handlers:
     ))
     logger.addHandler(_fh)
     logger.propagate = False
-
-# --- Identity bootstrap ---
-
-CLAUDE_MD_HEADER = "<!-- AUTO-GENERATED: Do not edit. Modify AGENT.md, SOUL.md, MEMORY.md, or USER.md instead. -->\n\n"
-
-IDENTITY_FILES = [
-    ("AGENT.md", "# Agent"),
-    ("SOUL.md", "# Soul"),
-    ("MEMORY.md", "# Memory"),
-    ("USER.md", "# User"),
-]
-
-
-def build_claude_md(verbose: bool = False) -> None:
-    """Combine identity files into CLAUDE.md for SDK loading."""
-    sections: list[str] = []
-    found_files: list[str] = []
-
-    for filename, _header in IDENTITY_FILES:
-        filepath = AGENT_DIR / filename
-        if filepath.exists():
-            content = filepath.read_text(encoding="utf-8")
-            sections.append(content)
-            if verbose:
-                found_files.append(f"{filename} ({len(content)} chars)")
-        elif filename == "USER.md":
-            if verbose:
-                print(f"[build_claude_md] {filename} not found, skipping")
-        else:
-            raise FileNotFoundError(f"Required identity file not found: {filepath}")
-
-    combined = CLAUDE_MD_HEADER + "\n\n---\n\n".join(sections)
-    output_path = AGENT_DIR / "CLAUDE.md"
-    try:
-        existing = output_path.read_text(encoding="utf-8")
-    except (OSError, FileNotFoundError):
-        existing = None
-    if existing != combined:
-        output_path.write_text(combined, encoding="utf-8")
-
-    if verbose:
-        print(f"[build_claude_md] Found: {', '.join(found_files)}")
-        print(f"[build_claude_md] Wrote CLAUDE.md ({len(combined)} chars total)")
-
-
-# --- Spinner ---
-
-class Spinner:
-    FRAMES = ("|", "/", "-", "\\")
-    INPUT_PRICE_PER_MT = 15.0
-    OUTPUT_PRICE_PER_MT = 75.0
-
-    def __init__(self, label="working"):
-        self.label = label
-        self.stream = sys.stderr
-        self._task = None
-        self._paused = False
-        self._started_at = None
-        self.input_tokens = 0
-        self.output_tokens = 0
-        self.cost_usd = None
-
-    def add_tokens(self, input_tokens=0, output_tokens=0):
-        self.input_tokens += input_tokens
-        self.output_tokens += output_tokens
-
-    def set_cost(self, usd):
-        self.cost_usd = usd
-
-    def _estimated_cost(self):
-        if self.cost_usd is not None:
-            return self.cost_usd
-        return (
-            self.input_tokens * self.INPUT_PRICE_PER_MT / 1_000_000
-            + self.output_tokens * self.OUTPUT_PRICE_PER_MT / 1_000_000
-        )
-
-    def _render_line(self):
-        elapsed = time.monotonic() - (self._started_at or time.monotonic())
-        frame = self.FRAMES[int(elapsed * 10) % 4]
-        parts = [f"\r  {frame} {self.label} ({elapsed:5.1f}s)"]
-        if self.input_tokens or self.output_tokens:
-            total = self.input_tokens + self.output_tokens
-            parts.append(f" | {total:>6,} tok")
-            cost = self._estimated_cost()
-            tag = "$" if self.cost_usd is not None else "~$"
-            parts.append(f" | {tag}{cost:.4f}")
-            if elapsed > 1.0:
-                parts.append(f" | {tag}{cost / (elapsed / 60):.2f}/min")
-        return "".join(parts)
-
-    async def _spin(self):
-        try:
-            while True:
-                if not self._paused:
-                    self.stream.write(self._render_line())
-                    self.stream.flush()
-                await asyncio.sleep(0.1)
-        except asyncio.CancelledError:
-            self._clear()
-            raise
-
-    def _clear(self):
-        self.stream.write("\r" + " " * 120 + "\r")
-        self.stream.flush()
-
-    def start(self):
-        if self._task is None:
-            self._started_at = time.monotonic()
-            self._task = asyncio.create_task(self._spin())
-
-    async def stop(self):
-        if self._task:
-            self._task.cancel()
-            try:
-                await self._task
-            except asyncio.CancelledError:
-                pass
-            self._task = None
-            self._clear()
-
-    class _Pause:
-        def __init__(self, s): self.s = s
-        def __enter__(self): self.s._paused = True; self.s._clear(); return self
-        def __exit__(self, *e): self.s._paused = False
-
-    def paused(self):
-        return Spinner._Pause(self)
-
-
-class _NullCtx:
-    def __enter__(self): return self
-    def __exit__(self, *e): return None
-
-
-# --- Tool call formatter ---
-
-def _truncate(s, limit=80):
-    s = " ".join(str(s).split())
-    return s if len(s) <= limit else s[: limit - 1] + "..."
-
-
-def format_tool_call(name, tool_input):
-    """Render a short one-line summary of a tool call for the user."""
-    short_name = name.split("__")[-1] if name.startswith("mcp__") else name
-    previews = {
-        "Bash": ("command",),
-        "Read": ("file_path",),
-        "Edit": ("file_path",),
-        "Write": ("file_path",),
-        "Glob": ("pattern",),
-        "Grep": ("pattern",),
-        "WebFetch": ("url",),
-        "WebSearch": ("query",),
-    }
-    keys = previews.get(short_name)
-    if not keys and name.startswith("mcp__"):
-        keys = ("url", "query", "action", "prompt", "path")
-    if keys:
-        for k in keys:
-            v = tool_input.get(k)
-            if v:
-                return f"  [Tool: {short_name}] {k}={_truncate(v)}"
-    for k, v in tool_input.items():
-        if isinstance(v, (str, int, float, bool)):
-            return f"  [Tool: {short_name}] {k}={_truncate(v)}"
-    return f"  [Tool: {short_name}]"
-
 
 # --- Safety hook ---
 #
@@ -322,7 +176,7 @@ async def _drain_responses(client, verbose):
             if isinstance(message, AssistantMessage):
                 if message.error:
                     logger.error("assistant error: %s", message.error)
-                    ctx = spinner.paused() if spinner else _NullCtx()
+                    ctx = spinner.paused() if spinner else nullcontext()
                     with ctx:
                         print(f"[Error: {message.error}]")
                     continue
@@ -332,7 +186,7 @@ async def _drain_responses(client, verbose):
                         output_tokens=int(message.usage.get("output_tokens", 0) or 0),
                     )
                 for block in message.content:
-                    ctx = spinner.paused() if spinner else _NullCtx()
+                    ctx = spinner.paused() if spinner else nullcontext()
                     with ctx:
                         if isinstance(block, TextBlock):
                             print(block.text)
@@ -347,7 +201,7 @@ async def _drain_responses(client, verbose):
             elif isinstance(message, ResultMessage):
                 if spinner and message.total_cost_usd:
                     spinner.set_cost(message.total_cost_usd)
-                ctx = spinner.paused() if spinner else _NullCtx()
+                ctx = spinner.paused() if spinner else nullcontext()
                 with ctx:
                     if message.is_error:
                         logger.error("result error subtype=%s", message.subtype)
@@ -386,14 +240,18 @@ async def main():
     print(f"  Log file: {LOG_PATH}")
     print("  (rotates at 5 MB, keeping 3 backups)")
 
-    build_claude_md(verbose=verbose)
+    build_claude_md(agent_dir=AGENT_DIR, verbose=verbose)
 
     from tools import tools_server  # noqa: E402
 
     options = ClaudeAgentOptions(
         setting_sources=["project"],
         cwd=str(AGENT_DIR),
-        mcp_servers={"agent_tools": tools_server},
+        mcp_servers={
+            "agent_tools": tools_server,
+            {{recipe_servers_block}}
+            {{external_mcp_block}}
+        },
         tools={{tools_list}},
         allowed_tools={{allowed_tools_list}},
         permission_mode="{{permission_mode}}",

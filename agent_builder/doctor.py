@@ -17,10 +17,27 @@ import re
 from pathlib import Path
 from typing import Any
 
+from agent_builder.recipes.loader import load_all_recipes
+from agent_builder.recipes.schema import RecipeError
 from agent_builder.tools.registry import DEFAULT_REGISTRY, REQUIRED_AGENT_FILES
-from agent_builder.tools.scaffold import REQUIRED_PLACEHOLDERS as EXPECTED_TEMPLATE_PLACEHOLDERS
+from agent_builder.tools.scaffold import (
+    REQUIRED_PLACEHOLDERS as EXPECTED_TEMPLATE_PLACEHOLDERS,
+    REQUIRED_PLACEHOLDERS_BY_MODE,
+    _TEMPLATE_BY_MODE,
+)
 
 BUILDER_IDENTITY_FILES = ("AGENT.md", "SOUL.md", "MEMORY.md")
+
+EXPECTED_AGENT_MD_SLOTS = (
+    "{{slot:purpose}}",
+    "{{slot:workflow}}",
+    "{{slot:constraints}}",
+    "{{slot:tools_reference}}",
+    "{{slot:examples}}",
+    "{{slot:first_run_setup}}",
+    "{{slot:builder_agent_additions}}",
+    "{{slot:user_additions}}",
+)
 
 _UNFILLED_PLACEHOLDER = re.compile(r"\{\{[^}]+\}\}")
 
@@ -124,24 +141,47 @@ def _check_builder_identity(builder_dir: Path) -> list[dict[str, str]]:
     return checks
 
 
-def _check_template_placeholders(builder_dir: Path) -> dict[str, str]:
-    """Verify the scaffold template still contains every expected placeholder."""
-    template_path = builder_dir / "templates" / "agent_main.py.tmpl"
-    if not template_path.exists():
-        return _check("FAIL", "scaffold template", f"missing: {template_path}")
-    content = template_path.read_text(encoding="utf-8")
-    missing = [ph for ph in EXPECTED_TEMPLATE_PLACEHOLDERS if ph not in content]
+def _check_template_placeholders(builder_dir: Path) -> list[dict[str, str]]:
+    """Verify every scaffold template still contains its expected placeholders.
+
+    Each mode (cli, poll, …) has its own template and its own required-
+    placeholder tuple. One check per mode so template drift for any single
+    mode shows up clearly in the doctor output.
+    """
+    checks: list[dict[str, str]] = []
+    for mode, fname in _TEMPLATE_BY_MODE.items():
+        template_path = builder_dir / "templates" / fname
+        name = f"template: {fname}"
+        if not template_path.exists():
+            checks.append(_check("FAIL", name, f"missing: {template_path}"))
+            continue
+        content = template_path.read_text(encoding="utf-8")
+        expected = REQUIRED_PLACEHOLDERS_BY_MODE[mode]
+        missing = [ph for ph in expected if ph not in content]
+        if missing:
+            checks.append(_check(
+                "FAIL",
+                name + " placeholders",
+                f"{template_path} is missing: {missing}",
+            ))
+        else:
+            checks.append(_check(
+                "OK",
+                name + " placeholders",
+                f"all {len(expected)} present",
+            ))
+    return checks
+
+
+def _check_agent_md_template(builder_dir: Path) -> list[dict[str, str]]:
+    path = builder_dir / "templates" / "agent_md.tmpl"
+    if not path.exists():
+        return [_check("FAIL", "agent_md template", f"missing: {path}")]
+    content = path.read_text(encoding="utf-8")
+    missing = [s for s in EXPECTED_AGENT_MD_SLOTS if s not in content]
     if missing:
-        return _check(
-            "FAIL",
-            "scaffold template placeholders",
-            f"{template_path} is missing: {missing}",
-        )
-    return _check(
-        "OK",
-        "scaffold template placeholders",
-        f"all {len(EXPECTED_TEMPLATE_PLACEHOLDERS)} placeholders present",
-    )
+        return [_check("FAIL", "agent_md slots", f"missing slots: {missing}")]
+    return [_check("OK", "agent_md slots", f"all {len(EXPECTED_AGENT_MD_SLOTS)} present")]
 
 
 def _check_generated_agents_no_placeholders(output_dir: Path) -> list[dict[str, str]]:
@@ -180,6 +220,52 @@ def _check_generated_agents_no_placeholders(output_dir: Path) -> list[dict[str, 
     return checks
 
 
+def _check_poll_agents_have_poll_source(output_dir: Path) -> list[dict[str, str]]:
+    """FAIL any poll-mode agent whose agent.py still calls `_stub_poll_source()`.
+
+    A poll-mode agent scaffolds with a stub that raises NotImplementedError on
+    first iteration — the agent is dead on launch until `attach_recipe` wires
+    a real poll source. The stub CALL site (not the def) is only present when
+    nothing replaced it. The builder's Phase 2.5 should prevent this from
+    shipping, but doctor catches any regression or manual edit that leaves an
+    agent in the half-built state.
+    """
+    checks: list[dict[str, str]] = []
+    if not output_dir.exists():
+        return checks
+    for d in output_dir.iterdir():
+        if not d.is_dir():
+            continue
+        agent_py = d / "agent.py"
+        if not agent_py.exists():
+            continue
+        try:
+            content = agent_py.read_text(encoding="utf-8")
+        except OSError:
+            continue
+        # Only poll-mode agents carry the marker; cli-mode agents have no
+        # _stub_poll_source references at all.
+        if "poll_source = _stub_poll_source()" in content:
+            checks.append(_check(
+                "FAIL",
+                f"poll_source: {d.name}",
+                "poll-mode agent has no poll recipe attached — "
+                "will crash on launch. Attach a poll-capable recipe.",
+            ))
+    return checks
+
+
+def _check_recipes_load(builder_dir: Path) -> list[dict[str, str]]:
+    recipes_dir = builder_dir / "recipes"
+    if not recipes_dir.exists():
+        return [_check("WARN", "recipes dir", f"{recipes_dir} not found — recipe library disabled")]
+    try:
+        recipes = load_all_recipes(recipes_dir)
+    except RecipeError as e:
+        return [_check("FAIL", "recipes load", str(e))]
+    return [_check("OK", "recipes load", f"{len(recipes)} recipe(s) loaded")]
+
+
 def run_health_check(
     repo_root: Path,
     registry_file: str = DEFAULT_REGISTRY,
@@ -204,11 +290,20 @@ def run_health_check(
     # 4. Builder identity files.
     checks.extend(_check_builder_identity(builder_dir))
 
-    # 5. Scaffold template placeholders intact.
-    checks.append(_check_template_placeholders(builder_dir))
+    # 5. Scaffold template placeholders intact (one check per mode template).
+    checks.extend(_check_template_placeholders(builder_dir))
 
-    # 6. Generated agents have no unfilled placeholders.
+    # 6. AGENT.md slot template intact.
+    checks.extend(_check_agent_md_template(builder_dir))
+
+    # 7. Generated agents have no unfilled placeholders.
     checks.extend(_check_generated_agents_no_placeholders(output_dir))
+
+    # 7a. Poll-mode agents have a poll recipe attached.
+    checks.extend(_check_poll_agents_have_poll_source(output_dir))
+
+    # 8. Recipes load cleanly.
+    checks.extend(_check_recipes_load(builder_dir))
 
     exit_code = 1 if any(c["status"] == "FAIL" for c in checks) else 0
     return checks, exit_code

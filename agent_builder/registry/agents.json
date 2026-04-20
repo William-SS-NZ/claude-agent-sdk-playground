@@ -10,5 +10,25 @@
     "created": "2026-04-18",
     "path": "output/ez-read/",
     "status": "active"
+  },
+  {
+    "name": "mc-shift-mgr",
+    "description": "Telegram bot that parses McDonald's shift screenshots, manages Google Calendar events, remembers shift rules, and answers schedule questions. Paired contacts filtering + interactive CLI for maintenance.",
+    "tools": [
+      "Read",
+      "Glob",
+      "Grep",
+      "manage_contacts",
+      "manage_rules",
+      "send_telegram_message",
+      "get_telegram_photo"
+    ],
+    "created": "2026-04-20",
+    "updated_at": "2026-04-20",
+    "path": "output/mc-shift-mgr/",
+    "status": "active",
+    "max_turns": 30,
+    "max_budget_usd": 2,
+    "permission_mode": "dontAsk"
   }
 ]

@@ -1,5 +1,6 @@
 """scaffold_agent tool — creates agent directory and boilerplate files."""
 
+import json
 import re
 from pathlib import Path
 from typing import Any
@@ -7,28 +8,73 @@ from typing import Any
 from claude_agent_sdk import tool
 
 from agent_builder import _version as _builder_version
+from agent_builder.manifest import MANIFEST_FILENAME, empty_manifest, save_manifest
+from agent_builder.paths import SLUG_PATTERN, validate_relative_to_base
 
 TEMPLATES_DIR = Path(__file__).parent.parent / "templates"
 
-NAME_PATTERN = re.compile(r"^[a-z0-9][a-z0-9-]*$")
+NAME_PATTERN = SLUG_PATTERN
 
-# Placeholders the scaffold template MUST contain. Single source of truth —
-# doctor.py imports this to keep its drift guard in sync with what scaffold
-# actually substitutes. Every entry here must appear both in the template
-# and in the .replace() chain inside scaffold_agent().
-REQUIRED_PLACEHOLDERS = (
+# Mode -> template filename. "server" mode arrives in Phase F.
+_TEMPLATE_BY_MODE = {
+    "cli": "agent_main.py.tmpl",
+    "poll": "agent_poll.py.tmpl",
+}
+
+# Stubs filled when no recipe supplies poll_source. Keeps generated agents
+# syntactically valid so they can be run (will raise NotImplementedError when
+# the poll loop starts, with a helpful message).
+# The expr stub carries its own 8-space indent so it sits correctly inside
+# the `async with ClaudeSDKClient(...)` block — re-renders keep this indent.
+_POLL_SOURCE_IMPORT_STUB = ""
+_POLL_SOURCE_EXPR_STUB = (
+    "        poll_source = _stub_poll_source()"
+    "  # attach a poll recipe (e.g. telegram-poll) to replace"
+)
+_POLL_SOURCE_STUB_IMPL = '''
+# <<poll_source_stub_impl>>
+async def _stub_poll_source():
+    raise NotImplementedError(
+        "No poll source attached. Run: python -m agent_builder.builder "
+        "then attach_recipe for this agent with a poll-type recipe."
+    )
+    yield  # pragma: no cover — make this a generator
+# <</poll_source_stub_impl>>
+'''
+
+# Placeholders common to every template.
+REQUIRED_PLACEHOLDERS_COMMON = (
     "{{agent_name}}",
     "{{agent_description}}",
     "{{builder_version}}",
+    "{{recipe_pins_block}}",
     "{{tools_list}}",
     "{{allowed_tools_list}}",
     "{{permission_mode}}",
     "{{max_turns}}",
     "{{max_budget_usd}}",
-    "{{cli_args_block}}",
-    "{{cli_dispatch_block}}",
-    "{{cli_help_epilog}}",
+    "{{recipe_imports_block}}",
+    "{{recipe_servers_block}}",
+    "{{external_mcp_block}}",
 )
+
+# Mode-specific placeholders. Doctor imports REQUIRED_PLACEHOLDERS_BY_MODE
+# to run the drift guard over every template.
+REQUIRED_PLACEHOLDERS_BY_MODE = {
+    "cli": REQUIRED_PLACEHOLDERS_COMMON + (
+        "{{cli_args_block}}",
+        "{{cli_dispatch_block}}",
+        "{{cli_help_epilog}}",
+    ),
+    "poll": REQUIRED_PLACEHOLDERS_COMMON + (
+        "{{poll_source_import}}",
+        "{{poll_source_expr}}",
+    ),
+}
+
+# Back-compat alias — doctor.py still imports REQUIRED_PLACEHOLDERS, and the
+# scaffold template drift guard in test_scaffold.py references it.
+REQUIRED_PLACEHOLDERS = REQUIRED_PLACEHOLDERS_BY_MODE["cli"]
 
 GITIGNORE_CONTENT = """\
 .env
@@ -94,19 +140,31 @@ _CLI_DISPATCH_BLOCK = '''\
 '''
 
 
+def _scaffold_error(msg: str) -> dict[str, Any]:
+    """Return the MCP error shape used throughout scaffold_agent."""
+    return {"content": [{"type": "text", "text": msg}], "is_error": True}
+
+
 def _validate_agent_name(agent_name: str, output_base: str) -> str | None:
-    """Validate agent_name and return error message if invalid, None if valid."""
+    """Validate agent_name and return error message if invalid, None if valid.
+
+    The slug-regex check and the "no ``..``/``/``/``\\\\`` in the name" check
+    are scaffold-specific (agent names must be clean, human-readable slugs).
+    The "does this path land inside output_base?" check delegates to the
+    shared ``validate_relative_to_base`` helper — same logic the other three
+    tools use.
+    """
     if not NAME_PATTERN.match(agent_name):
         return f"Invalid agent name '{agent_name}'. Must match ^[a-z0-9][a-z0-9-]*$ (lowercase alphanumeric and hyphens, must start with alphanumeric)."
 
     if ".." in agent_name or "/" in agent_name or "\\" in agent_name:
         return f"Invalid agent name '{agent_name}'. Must not contain '..', '/', or '\\\\'."
 
-    resolved = (Path(output_base) / agent_name).resolve()
-    base_resolved = Path(output_base).resolve()
-    try:
-        resolved.relative_to(base_resolved)
-    except ValueError:
+    _, err = validate_relative_to_base(
+        str(Path(output_base) / agent_name),
+        [Path(output_base)],
+    )
+    if err is not None:
         return f"Invalid agent name '{agent_name}'. Path traversal detected."
 
     return None
@@ -122,10 +180,32 @@ async def scaffold_agent(args: dict[str, Any], output_base: str = "output") -> d
     max_turns = int(args.get("max_turns", 25))
     max_budget_usd = float(args.get("max_budget_usd", 1.00))
     cli_mode = bool(args.get("cli_mode", True))
+    mode = args.get("mode", "cli")
+
+    if mode not in _TEMPLATE_BY_MODE:
+        return {
+            "content": [{"type": "text", "text": (
+                f"Invalid mode '{mode}'. Allowed: {sorted(_TEMPLATE_BY_MODE)}."
+            )}],
+            "is_error": True,
+        }
+
+    # Validate external_mcps: optional dict of { name: {type: ..., ...} }.
+    # Used by the builder when spinning up an agent that talks to an existing
+    # MCP server directly (no recipe). Rendered inline into the agent.py's
+    # mcp_servers={} dict alongside the agent_tools server.
+    external_mcps = args.get("external_mcps", {})
+    if not isinstance(external_mcps, dict):
+        return _scaffold_error("external_mcps must be a dict")
+    for ext_name, cfg in external_mcps.items():
+        if not isinstance(cfg, dict) or "type" not in cfg:
+            return _scaffold_error(
+                f"external_mcps[{ext_name!r}]: must be a dict with 'type' key"
+            )
 
     error = _validate_agent_name(agent_name, output_base)
     if error:
-        return {"content": [{"type": "text", "text": error}], "is_error": True}
+        return _scaffold_error(error)
 
     agent_dir = Path(output_base) / agent_name
 
@@ -137,16 +217,17 @@ async def scaffold_agent(args: dict[str, Any], output_base: str = "output") -> d
 
     agent_dir.mkdir(parents=True)
 
-    # Render agent_main.py template
-    template_path = TEMPLATES_DIR / "agent_main.py.tmpl"
+    # Render agent entrypoint template (varies by mode).
+    template_path = TEMPLATES_DIR / _TEMPLATE_BY_MODE[mode]
     template = template_path.read_text(encoding="utf-8")
 
-    missing_in_template = [p for p in REQUIRED_PLACEHOLDERS if p not in template]
+    expected_placeholders = REQUIRED_PLACEHOLDERS_BY_MODE[mode]
+    missing_in_template = [p for p in expected_placeholders if p not in template]
     if missing_in_template:
         return {
             "content": [{"type": "text", "text": (
                 f"Template is missing expected placeholders: {missing_in_template}. "
-                "This is a builder bug — update agent_main.py.tmpl."
+                f"This is a builder bug — update {_TEMPLATE_BY_MODE[mode]}."
             )}],
             "is_error": True,
         }
@@ -161,6 +242,36 @@ async def scaffold_agent(args: dict[str, Any], output_base: str = "output") -> d
     # Description is for argparse --help, so escape any quotes
     description_for_help = (description or f"{agent_name} agent").replace('"', '\\"')
 
+    # For poll mode, inject the _stub_poll_source() helper above `# --- Main ---`
+    # so the generated agent runs without NameError before a real poll recipe is
+    # attached. Must happen BEFORE the placeholder .replace() chain so the stub
+    # body doesn't accidentally interact with substitutions.
+    if mode == "poll":
+        template = template.replace(
+            "# --- Main ---",
+            _POLL_SOURCE_STUB_IMPL + "\n# --- Main ---",
+            1,
+        )
+
+    # Render external_mcps inline into the mcp_servers={} dict. When empty,
+    # emit only the render-marker pair so future render_agent calls (e.g.
+    # attach_recipe for mcp-type recipes) can find and refill this block.
+    if external_mcps:
+        # json.dumps produces double-quoted Python-compatible dict/list/str
+        # literals — matches the render.py output for consistency.
+        external_entries = "\n            ".join(
+            f'"{ext_name}": {json.dumps(cfg)},'
+            for ext_name, cfg in external_mcps.items()
+        )
+        external_mcp_body = (
+            f"# <<external_mcp_block>>\n            {external_entries}\n"
+            f"            # <</external_mcp_block>>"
+        )
+    else:
+        external_mcp_body = (
+            "# <<external_mcp_block>>\n            # <</external_mcp_block>>"
+        )
+
     agent_py = (
         template
         .replace("{{agent_name}}", agent_name)
@@ -174,7 +285,33 @@ async def scaffold_agent(args: dict[str, Any], output_base: str = "output") -> d
         .replace("{{cli_args_block}}", cli_args_block)
         .replace("{{cli_dispatch_block}}", cli_dispatch_block)
         .replace("{{cli_help_epilog}}", cli_help_epilog)
+        .replace("{{recipe_imports_block}}", "# <<recipe_imports_block>>\n# <</recipe_imports_block>>")
+        .replace("{{recipe_servers_block}}", "# <<recipe_servers_block>>\n            # <</recipe_servers_block>>")
+        .replace("{{external_mcp_block}}", external_mcp_body)
+        .replace("{{recipe_pins_block}}", "# <<recipe_pins_block>>\nRECIPE_PINS = {}\n# <</recipe_pins_block>>")
     )
+
+    if mode == "poll":
+        # Wrap the default stub values in marker pairs so `render_agent` can
+        # locate and rewrite them when a poll-source recipe is attached later.
+        # Both markers sit at column 0 — Python tolerates comment lines at any
+        # indent inside a function body, and keeping them flat makes the regex
+        # round-trip in render.py indent-agnostic.
+        poll_import_block = (
+            "# <<poll_source_import>>\n"
+            f"{_POLL_SOURCE_IMPORT_STUB}\n"
+            "# <</poll_source_import>>"
+        )
+        poll_expr_block = (
+            "# <<poll_source_expr>>\n"
+            f"{_POLL_SOURCE_EXPR_STUB}\n"
+            "# <</poll_source_expr>>"
+        )
+        agent_py = (
+            agent_py
+            .replace("{{poll_source_import}}", poll_import_block)
+            .replace("{{poll_source_expr}}", poll_expr_block)
+        )
 
     # Fail loudly if any placeholder survived — the generated agent.py would
     # be invalid Python and fail with NameError on first run otherwise.
@@ -198,7 +335,14 @@ async def scaffold_agent(args: dict[str, Any], output_base: str = "output") -> d
     # Write .gitignore
     (agent_dir / ".gitignore").write_text(GITIGNORE_CONTENT, encoding="utf-8")
 
-    created_files = ["agent.py", ".env.example", ".gitignore"]
+    # Seed an empty .recipe_manifest.json so later attach_recipe calls have
+    # a file to read and render_agent can reconstitute the agent deterministically.
+    save_manifest(
+        agent_dir / MANIFEST_FILENAME,
+        empty_manifest(agent_name=agent_name, builder_version=_builder_version.__version__),
+    )
+
+    created_files = ["agent.py", ".env.example", ".gitignore", MANIFEST_FILENAME]
     return {
         "content": [
             {
@@ -220,7 +364,13 @@ scaffold_agent_tool = tool(
     "max_budget_usd: per-conversation USD budget cap (default 1.00). "
     "cli_mode: when true (default), the generated agent.py also accepts "
     "-p/--prompt 'text' and -s/--spec file.json for non-interactive runs. "
-    "Set false to ship a chat-only agent.",
+    "Set false to ship a chat-only agent. "
+    "mode: 'cli' (default) for interactive / CLI agents, 'poll' for long-poll "
+    "workers that react to an incoming-message stream (e.g. Telegram). "
+    "external_mcps: optional dict mapping server-name -> SDK-shaped config "
+    "(must include 'type' key) rendered inline into the generated agent.py's "
+    "mcp_servers dict — use when wiring a non-recipe MCP server directly. "
+    "Remember to also extend allowed_tools_list with 'mcp__<name>__*' patterns.",
     {
         "type": "object",
         "properties": {
@@ -232,6 +382,8 @@ scaffold_agent_tool = tool(
             "max_turns": {"type": "integer"},
             "max_budget_usd": {"type": "number"},
             "cli_mode": {"type": "boolean"},
+            "mode": {"type": "string", "enum": ["cli", "poll"]},
+            "external_mcps": {"type": "object"},
         },
         "required": ["agent_name", "description"],
     },

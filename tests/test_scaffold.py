@@ -246,3 +246,115 @@ async def test_scaffold_cli_mode_false_omits_spec_format_epilog(tmp_path: Path):
     source = (tmp_path / "epilog-off" / "agent.py").read_text(encoding="utf-8")
     assert "SPEC FORMAT:" not in source
     assert "epilog=None" in source
+
+
+@pytest.mark.asyncio
+async def test_scaffold_cli_mode_default(tmp_path):
+    out = tmp_path / "output"
+    out.mkdir()
+    result = await scaffold_agent(
+        {"agent_name": "cli-a", "description": "x"},
+        output_base=str(out),
+    )
+    assert result.get("is_error") is not True
+    assert (out / "cli-a" / "agent.py").exists()
+    assert 'while True' in (out / "cli-a" / "agent.py").read_text()
+
+
+@pytest.mark.asyncio
+async def test_scaffold_poll_mode(tmp_path):
+    out = tmp_path / "output"
+    out.mkdir()
+    result = await scaffold_agent(
+        {"agent_name": "poll-a", "description": "x", "mode": "poll"},
+        output_base=str(out),
+    )
+    assert result.get("is_error") is not True
+    content = (out / "poll-a" / "agent.py").read_text()
+    assert 'async for incoming in poll_source' in content
+    # scaffold renders stubs for poll source when no recipe attached yet
+    assert "{{poll_source_import}}" not in content
+    assert "{{poll_source_expr}}" not in content
+    # Stub expression is present
+    assert "_stub_poll_source" in content
+
+
+@pytest.mark.asyncio
+async def test_scaffold_unknown_mode_errors(tmp_path):
+    out = tmp_path / "output"
+    out.mkdir()
+    result = await scaffold_agent(
+        {"agent_name": "bad", "description": "x", "mode": "carrier-pigeon"},
+        output_base=str(out),
+    )
+    assert result["is_error"] is True
+    assert "mode" in result["content"][0]["text"]
+
+
+@pytest.mark.asyncio
+async def test_scaffold_external_mcps_inlined(tmp_path):
+    out = tmp_path / "output"
+    out.mkdir()
+    result = await scaffold_agent(
+        {
+            "agent_name": "ex",
+            "description": "x",
+            "external_mcps": {
+                "gcal": {
+                    "type": "stdio",
+                    "command": "npx",
+                    "args": ["-y", "@modelcontextprotocol/server-google-calendar"],
+                },
+            },
+        },
+        output_base=str(out),
+    )
+    assert result.get("is_error") is not True, result
+    content = (out / "ex" / "agent.py").read_text()
+    assert '"gcal"' in content
+    assert '"npx"' in content
+
+
+@pytest.mark.asyncio
+async def test_scaffold_external_mcps_malformed_errors(tmp_path):
+    out = tmp_path / "output"
+    out.mkdir()
+    result = await scaffold_agent(
+        {
+            "agent_name": "bad-ext",
+            "description": "x",
+            "external_mcps": {"oops": "not-a-dict"},
+        },
+        output_base=str(out),
+    )
+    assert result["is_error"] is True
+
+
+@pytest.mark.asyncio
+async def test_scaffold_external_mcps_missing_type_errors(tmp_path):
+    out = tmp_path / "output"
+    out.mkdir()
+    result = await scaffold_agent(
+        {
+            "agent_name": "bad-ext2",
+            "description": "x",
+            "external_mcps": {"oops": {"command": "npx"}},
+        },
+        output_base=str(out),
+    )
+    assert result["is_error"] is True
+
+
+@pytest.mark.asyncio
+async def test_scaffold_external_mcps_not_a_dict_errors(tmp_path):
+    out = tmp_path / "output"
+    out.mkdir()
+    result = await scaffold_agent(
+        {
+            "agent_name": "bad-ext3",
+            "description": "x",
+            "external_mcps": "not-a-dict",
+        },
+        output_base=str(out),
+    )
+    assert result["is_error"] is True

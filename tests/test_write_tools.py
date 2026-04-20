@@ -5,7 +5,7 @@ from agent_builder.tools.write_tools import write_tools
 SAMPLE_TOOLS_CODE = '''
 @tool("greet", "Greet a user", {"name": str})
 async def greet(args: dict[str, Any]) -> dict[str, Any]:
-    if TEST_MODE:
+    if _test_mode():
         return {"content": [{"type": "text", "text": "Mock: Hello, friend!"}]}
     return {"content": [{"type": "text", "text": f"Hello, {args['name']}!"}]}
 
@@ -27,7 +27,8 @@ async def test_write_tools_creates_file(tmp_path: Path):
     tools_py = agent_dir / "tools.py"
     assert tools_py.exists()
     content = tools_py.read_text(encoding="utf-8")
-    assert "TEST_MODE = False" in content
+    assert "def _test_mode()" in content
+    assert "AGENT_TEST_MODE" in content
     assert "from claude_agent_sdk import" in content
     assert "from typing import Any" in content
     assert "async def greet" in content
@@ -46,7 +47,7 @@ async def test_write_tools_header_before_code(tmp_path: Path):
     )
 
     content = (agent_dir / "tools.py").read_text(encoding="utf-8")
-    header_pos = content.index("TEST_MODE = False")
+    header_pos = content.index("def _test_mode()")
     code_pos = content.index("async def greet")
     assert header_pos < code_pos
 

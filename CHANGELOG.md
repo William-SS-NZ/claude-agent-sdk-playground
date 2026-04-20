@@ -3,7 +3,49 @@
 All notable changes to this project are documented here.
 Format loosely follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
-## [Unreleased] — pre-release audit fixes
+## [0.9.0] - 2026-04-20
+
+Recipe library, manifest-driven composition, OAuth scaffolding, and the poll-mode template — plus rollups from the v0.8 backlog.
+
+### Added
+- **Recipe library** under `agent_builder/recipes/{mcps,tools,skills}/<slug>/`. Every recipe is a directory with a frontmatter-driven `RECIPE.md` (type / version / description / when_to_use / env_keys / oauth_scopes / allowed_tools_patterns / tags) and its sibling implementation files. Loader validates the sibling set: tool recipes require `tool.py`; mcp recipes require `mcp.json`; oauth-capable mcp recipes additionally require `setup_auth.py.tmpl`.
+- **Two new builder MCP tools**:
+  - `list_recipes` — JSON index of known recipes, filterable by type and tag, for the builder to browse during Phase 2.
+  - `attach_recipe` — manifest-driven composition. Reads the per-agent `.recipe_manifest.json`, appends the recipe, and re-runs the renderer.
+- **Composition architecture**. `.recipe_manifest.json` in each agent dir is the single source of truth for attached recipes. `agent_builder/render.py::render_agent()` rebuilds `agent.py` + `AGENT.md` from the manifest using marker-pair blocks (`# <<block>> ... # <</block>>`) so rerunning attach is idempotent per (agent, recipe@version).
+- **Two shipped recipes**:
+  - `telegram-poll` — tool-type long-poll driver for Telegram bots.
+  - `google-calendar` — mcp-type with OAuth scopes + `setup_auth.py.tmpl`.
+- **New template mode: `poll`**. `templates/agent_poll.py.tmpl` is a long-poll worker that iterates an incoming-message stream. `scaffold_agent(mode="poll")` selects it; `cli` remains the default.
+- **`scaffold_agent.external_mcps` parameter** — inline external MCP server config in the generated `agent.py` without needing a recipe. Useful for one-off third-party MCP servers.
+- **`AGENT_TEST_MODE` env var** — replaces the file-mutating `TEST_MODE = False/True` flip in `test_agent`. The generated `TOOLS_HEADER` now reads `os.environ.get("AGENT_TEST_MODE") == "1"`; `test_agent` sets the env var for the duration of the test and never writes to `tools.py`.
+- **OAuth scaffolding**. When a recipe declares non-empty `oauth_scopes`, `attach_recipe` renders the recipe's `setup_auth.py.tmpl` into the agent dir and appends a first-run setup banner to the agent's `AGENT.md`.
+- **`docs/oauth-setup.md`** — user-facing OAuth setup guide with a worked Google Calendar example.
+- **Poll-mode test support**. `test_agent(mode="poll")` runs the generated agent in a subprocess against a synthetic incoming-message stream — no real Claude calls.
+- **`RECIPE_PINS = {...}`** dict stamped into every generated `agent.py` (JSON-shaped). Lists every attached recipe and version; empty at scaffold time, populated by `attach_recipe`.
+
+### Changed
+- **`build_claude_md` accepts an `agent_dir` kwarg shortcut** — callers can pass a single agent directory instead of the `source_dir` / `output_dir` pair.
+- **Generated-agent templates no longer inline shared helpers**. `Spinner`, `format_tool_call`, `build_claude_md`, `_NullCtx`, `_truncate`, `IDENTITY_FILES`, and `CLAUDE_MD_HEADER` are now imported from `agent_builder.utils`. Three copies collapsed to one (R6). `tests/test_template_imports.py` guards against regression.
+- **`attach_recipe` is idempotent** per (agent, recipe@version) — rerunning against an already-attached recipe is a no-op.
+- **`.env.example` merger uses versioned banners** — `# --- from recipe: <name> @ <version> ---` — so attached-recipe env declarations are traceable and re-attach stays deterministic.
+- **Path validators consolidated** into `agent_builder/paths.py::validate_relative_to_base` (R5). `scaffold`, `remove_agent`, `rollback`, and `self_heal` all delegate to it; four near-identical implementations collapsed to one.
+- **`self_heal` FileHandler is now lazy** — opened inside `propose_self_change` rather than at import time. Tests no longer leak real log file handles.
+- **`_cli_sweep` no longer double-scans** the filesystem. One scan, list retained, second pass deletes.
+- **`WebFetch` / `WebSearch` gated behind `ENABLE_WEB_TOOLS=1`** env var. Off by default in the public build; opt-in for the builder's design-research flow.
+- **Top-level `CLAUDE.md` updated** with "Recipes library", "Template modes", and `RECIPE_PINS` sections.
+
+### Fixed
+- **`test_agent` `TEST_MODE` mutation footgun**. A killed interpreter used to leave `tools.py` stuck in test mode, so the next real run silently returned mock data. The env-var approach (above) eliminates the file mutation entirely.
+- **Doctor now validates placeholders across every template** (cli + poll) via `REQUIRED_PLACEHOLDERS_BY_MODE`. Previously only the `cli` template was drift-guarded, so a missing placeholder in `agent_poll.py.tmpl` would slip through.
+
+### Deferred to v0.9.1+
+- `server` mode (FastAPI webhook) — v0.9.1 sub-plan.
+- Skill recipes — v0.9.2 sub-plan (Phase G).
+- Recipe resync — Phase H.
+- Authoring layer (builder creating/editing recipes mid-build) — v0.10 has its own plan + spec.
+
+## [0.8.0] - 2026-04-20
 
 ### Fixed
 - **Doctor template-drift guard was itself drifting.** `doctor.EXPECTED_TEMPLATE_PLACEHOLDERS` checked 9 placeholders; `scaffold_agent` required 11. `{{builder_version}}` and `{{cli_help_epilog}}` could go missing in the template without doctor flagging it — exactly the failure mode doctor is supposed to catch. Fix: scaffold now exports `REQUIRED_PLACEHOLDERS` as the single source of truth; doctor imports it. Regression test asserts the two are the same object.

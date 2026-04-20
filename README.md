@@ -46,6 +46,10 @@ python -m agent_builder.builder --help
 
 The builder reads `ANTHROPIC_API_KEY` from your environment. Each generated agent has its own `.env` (template at `agent_builder/templates/env_example.tmpl`).
 
+### Web tools (opt-in)
+
+`WebFetch` and `WebSearch` are off by default in the builder's tool list. Enable them by setting `ENABLE_WEB_TOOLS=1` in your environment before launching the builder. Use cases: the builder fetches current API docs during Phase 2 design research. Leave them off for public / untrusted environments.
+
 Building takes time — typically 3-10 minutes end to end, with Phase 5 (testing) alone adding 1-3 min per test prompt. The spinner shows the current phase (`Phase 4: scaffolding files`, `Phase 5: testing agent`, ...) with elapsed seconds, and a one-line banner fires when each phase begins.
 
 ## Architecture
@@ -88,7 +92,7 @@ A removal flow (`remove_agent`) is also supported, with explicit confirmation re
 - `propose_self_change` — builder self-heal. Edit the builder's own identity / tools / template / utils after a hard stdin confirmation. Whitelisted scope; `self_heal.py` itself is denied.
 - `rollback` — list / restore `.bak-<timestamp>` backups made by `edit_agent` or `propose_self_change`. Restore writes a fresh pre-restore backup so it is itself reversible.
 
-The builder also has `Read`, `Write`, `Edit`, `Glob`, `Grep`, `Bash`, `WebFetch`, `WebSearch` available, with `permission_mode="acceptEdits"`.
+The builder also has `Read`, `Write`, `Edit`, `Glob`, `Grep`, `Bash` available, with `permission_mode="acceptEdits"`. `WebFetch` and `WebSearch` are added only when `ENABLE_WEB_TOOLS=1` is set (see "Web tools (opt-in)" above).
 
 ### The `TEST_MODE` contract for generated tools
 

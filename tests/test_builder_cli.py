@@ -90,11 +90,28 @@ def test_setup_run_logger_isolates_runs(tmp_path: Path, monkeypatch):
     assert p1 != p2
 
 
-def test_web_tools_in_allowed_tools():
-    """Builder should be able to research live API docs while designing tools."""
+def test_web_tools_off_by_default(monkeypatch):
+    """WebFetch/WebSearch must be gated — off unless ENABLE_WEB_TOOLS=1."""
+    monkeypatch.delenv("ENABLE_WEB_TOOLS", raising=False)
+    opts = builder_mod._build_options()
+    assert "WebFetch" not in opts.allowed_tools
+    assert "WebSearch" not in opts.allowed_tools
+
+
+def test_web_tools_on_when_env_set(monkeypatch):
+    """Setting ENABLE_WEB_TOOLS=1 opts the builder into web research."""
+    monkeypatch.setenv("ENABLE_WEB_TOOLS", "1")
     opts = builder_mod._build_options()
     assert "WebFetch" in opts.allowed_tools
     assert "WebSearch" in opts.allowed_tools
+
+
+def test_web_tools_off_when_env_set_to_other_value(monkeypatch):
+    """Only the literal '1' enables — other truthy-ish values stay off."""
+    monkeypatch.setenv("ENABLE_WEB_TOOLS", "0")
+    opts = builder_mod._build_options()
+    assert "WebFetch" not in opts.allowed_tools
+    assert "WebSearch" not in opts.allowed_tools
 
 
 # --- Menu tests ---
