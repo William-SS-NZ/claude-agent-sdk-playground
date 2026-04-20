@@ -174,19 +174,40 @@ IDENTITY_FILES = [
 ]
 
 
-def build_claude_md(source_dir: str, output_dir: str, verbose: bool = False) -> None:
+def build_claude_md(
+    source_dir: str | Path | None = None,
+    output_dir: str | Path | None = None,
+    verbose: bool = False,
+    agent_dir: str | Path | None = None,
+) -> None:
     """Combine identity files into a single CLAUDE.md for SDK loading.
 
     Reads AGENT.md, SOUL.md, MEMORY.md, and USER.md (if exists) from source_dir,
     concatenates them with section headers, and writes CLAUDE.md to output_dir.
 
     Args:
-        source_dir: Directory containing identity files.
-        output_dir: Directory to write CLAUDE.md to.
+        source_dir: Directory containing identity files. Ignored if agent_dir is set.
+        output_dir: Directory to write CLAUDE.md to. Ignored if agent_dir is set.
         verbose: If True, print file sizes and progress.
+        agent_dir: Shortcut for generated agents whose identity files and
+            CLAUDE.md both live in the agent's own directory. When supplied,
+            source_dir and output_dir are both set to agent_dir. Mutually
+            exclusive with source_dir/output_dir.
     """
-    source = Path(source_dir)
-    output = Path(output_dir)
+    if agent_dir is not None:
+        if source_dir is not None or output_dir is not None:
+            raise TypeError(
+                "build_claude_md: pass either agent_dir alone, or source_dir + output_dir."
+            )
+        source = Path(agent_dir)
+        output = Path(agent_dir)
+    else:
+        if source_dir is None or output_dir is None:
+            raise TypeError(
+                "build_claude_md: must supply source_dir + output_dir, or agent_dir."
+            )
+        source = Path(source_dir)
+        output = Path(output_dir)
     sections: list[str] = []
     found_files: list[str] = []
 
