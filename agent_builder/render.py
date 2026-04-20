@@ -2,6 +2,7 @@
 
 import json
 import re
+from datetime import datetime
 from pathlib import Path
 
 from agent_builder.manifest import Manifest, MANIFEST_FILENAME, load_manifest
@@ -169,6 +170,31 @@ def _render_agent_md(agent_dir: Path, manifest: Manifest) -> None:
     template_path = TEMPLATES_DIR / "agent_md.tmpl"
     if not template_path.exists():
         return  # Task 0.4 adds this; render is a no-op until then.
+
+    # Data-loss guard (v0.9.x): AGENT.md files produced by `write_identity` have
+    # no SLOT markers — they are free-form markdown. Blindly re-rendering the
+    # template discards the entire purpose/workflow/constraints body. Skip the
+    # render when we detect that shape. Skill-recipe integration (Phase G /
+    # v0.9.2) will migrate these to slot-wrapped form explicitly; until then
+    # the safe default is "don't touch what you didn't author".
+    if agent_md.exists():
+        existing_text = agent_md.read_text(encoding="utf-8")
+        if not any(
+            f"<!-- SLOT: {slot} -->" in existing_text for slot in PRESERVED_SLOTS
+        ):
+            return
+
+        # Atomic pre-overwrite backup so any render is reversible via the
+        # existing `rollback` tool. Sub-second collisions abort (match the
+        # edit_agent / self_heal contract) instead of clobbering a backup.
+        stamp = datetime.now().strftime("%Y%m%d-%H%M%S")
+        backup_path = agent_md.with_name(f"{agent_md.name}.bak-{stamp}")
+        if backup_path.exists():
+            raise RuntimeError(
+                f"refusing to overwrite existing backup {backup_path.name} "
+                f"(sub-second render collision) — rerun in a moment"
+            )
+        backup_path.write_text(existing_text, encoding="utf-8")
 
     # Preserve the two user-owned slots from the existing AGENT.md.
     preserved: dict[str, str] = {}

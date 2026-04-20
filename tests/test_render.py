@@ -195,3 +195,47 @@ def test_render_preserves_user_additions_slot(tmp_path):
 
     content = (agent_dir / "AGENT.md").read_text()
     assert "Hand-written note that must survive." in content
+
+
+def test_render_preserves_slotless_hand_written_agent_md(tmp_path):
+    """Data-loss guard: AGENT.md files produced by `write_identity` have no
+    SLOT markers. render_agent must NOT overwrite them with the empty template —
+    that would silently drop the purpose/workflow/constraints body."""
+    agent_dir = _scaffolded_agent_sync(tmp_path)
+    manifest = Manifest(agent_name="a", builder_version="0.9.0")
+    save_manifest(agent_dir / ".recipe_manifest.json", manifest)
+
+    hand_written = (
+        "# a\n\n"
+        "## Purpose\nDo the thing.\n\n"
+        "## Workflow\n1. Step one.\n2. Step two.\n"
+    )
+    (agent_dir / "AGENT.md").write_text(hand_written, encoding="utf-8")
+
+    render_agent(agent_dir)
+
+    content = (agent_dir / "AGENT.md").read_text(encoding="utf-8")
+    assert content == hand_written, "render_agent wiped hand-written AGENT.md"
+
+
+def test_render_backs_up_agent_md_before_overwrite(tmp_path):
+    """Any render that IS going to overwrite AGENT.md must write a
+    `.bak-<timestamp>` first so the change is reversible via `rollback`."""
+    agent_dir = _scaffolded_agent_sync(tmp_path)
+    manifest = Manifest(agent_name="a", builder_version="0.9.0")
+    save_manifest(agent_dir / ".recipe_manifest.json", manifest)
+
+    original = (
+        "# a\n\n"
+        "## Purpose\nOriginal purpose.\n\n"
+        "<!-- SLOT: builder_agent_additions -->\n"
+        "<!-- /SLOT: builder_agent_additions -->\n\n"
+        "<!-- SLOT: user_additions -->\nkeep me\n<!-- /SLOT: user_additions -->\n"
+    )
+    (agent_dir / "AGENT.md").write_text(original, encoding="utf-8")
+
+    render_agent(agent_dir)
+
+    backups = list(agent_dir.glob("AGENT.md.bak-*"))
+    assert backups, "expected a .bak-<ts> sibling after render overwrote AGENT.md"
+    assert backups[0].read_text(encoding="utf-8") == original
