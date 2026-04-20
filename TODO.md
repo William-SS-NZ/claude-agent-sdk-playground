@@ -46,6 +46,17 @@ Audit deferrals still outstanding.
 - [ ] **`make setup` / one-shot onboarding script** — new contributor clones, runs one command, gets hooks activated + editable install + test run. Currently three manual steps.
 - [ ] **Complexity refactors on `_run_one_query`, `scaffold_agent`, `test_agent`.** Audit items 4.1–4.3. Each splits into 2–3 helpers. Risk: low; diff: chunky.
 
+## From PR #1 review (v0.9 code review pass)
+
+Latent data-loss + polish items surfaced while reviewing the v0.9 PR. Tests pass but these would bite real users on second-use paths.
+
+- [ ] **`render_agent` nukes hand-written AGENT.md on re-attach (DATA LOSS).** `_render_agent_md` preserves only content inside `<!-- SLOT: builder_agent_additions -->` / `<!-- SLOT: user_additions -->` markers. Every agent built via `write_identity` has no such markers, so re-running `attach_recipe` (e.g. to bump a recipe version) rewrites AGENT.md to the mostly-empty `agent_md.tmpl` skeleton and throws away the entire purpose/workflow/constraints body. Fix options: (a) detect slot-less AGENT.md and skip re-render (current behaviour for the v0.9 bespoke-identity flow); (b) migrate existing AGENT.mds by wrapping their body in a `builder_agent_additions` slot on first attach; (c) write a `.bak-<ts>` before each `_render_agent_md` so it's at least reversible. mc-shift-mgr and ez-read both at risk right now.
+- [ ] **`attach_recipe` version bump → no-op on already-attached recipe.** Idempotence key is `(agent, recipe@version)`; re-attaching an identical `(name, version)` pair is a no-op, but attaching a *newer* version isn't explicitly documented as the upgrade path. Add `attach_recipe --resync` (v0.9.x) that compares `RECIPE_PINS` against current recipe versions and rewrites the manifest+_recipes copy for any drift. Without this, recipe fixes (e.g. `telegram-poll` 0.1.0 → 0.1.1 dedupe) don't propagate to existing agents.
+- [ ] **`telegram_send` spins up a fresh `Application` per message.** Each send opens a bot app instance, initialises, sends, tears down. Fine at low volume; wasteful under chat bursts. Cache one `Application` keyed on bot token and reuse.
+- [ ] **Dedup state is per-process memory.** The telegram-poll `_seen_update_ids` list resets on agent restart. Telegram API only redelivers updates within a short window, so this is almost never a problem in practice, but a persistent cache (e.g. `.poll_state.json`) would also cover crash-recovery scenarios.
+- [ ] **PR #1 smoke-test checkboxes still open.** The test plan lists three unchecked items: interactive Telegram+Calendar build, `setup_auth.py` OAuth smoke, and generated-agent accepting a Telegram message. The Telegram end-to-end was exercised manually in the 2026-04-20 mc-shift-mgr session — tick those off in the PR body before merge.
+- [ ] **PR #1 is 12 k lines / 70 files.** Too large for a single review pass. Future feature branches should split recipe library, composition retrofit, and poll mode into separate PRs so each gets a focused review window.
+
 ## Polish / nice-to-have
 
 - [ ] Builder's own `MEMORY.md` never updates itself. Every agent build / edit / remove could be logged back so the builder "remembers" what it's done across sessions. Today it just sits static.
