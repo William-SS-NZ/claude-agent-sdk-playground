@@ -1,0 +1,6 @@
+{
+  "type": "stdio",
+  "command": "echo",
+  "args": ["fake"],
+  "env_passthrough": ["FAKE_TOKEN"]
+}

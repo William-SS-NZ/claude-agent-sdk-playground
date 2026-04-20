@@ -143,6 +143,38 @@ async def test_attach_telegram_poll_sets_manifest_poll_source(poll_agent_dir):
 
 
 @pytest.mark.asyncio
+async def test_attach_mcp_recipe_inlines_into_agent_py(agent_dir):
+    result = await attach_recipe(
+        {"agent_name": "test-agent", "recipe_name": "fake-mcp"},
+        output_base=str(agent_dir.parent),
+        recipes_root=FIXTURES,
+    )
+    assert result.get("is_error") is not True, result
+    agent_py = (agent_dir / "agent.py").read_text()
+    assert '"fake-mcp"' in agent_py or '"fake_mcp"' in agent_py
+    env_ex = (agent_dir / ".env.example").read_text()
+    assert "FAKE_TOKEN" in env_ex
+    assert "# --- from recipe: fake-mcp @ 0.1.0 ---" in env_ex
+
+
+@pytest.mark.asyncio
+async def test_attach_mcp_recipe_idempotent(agent_dir):
+    await attach_recipe(
+        {"agent_name": "test-agent", "recipe_name": "fake-mcp"},
+        output_base=str(agent_dir.parent),
+        recipes_root=FIXTURES,
+    )
+    env_ex_first = (agent_dir / ".env.example").read_text()
+    await attach_recipe(
+        {"agent_name": "test-agent", "recipe_name": "fake-mcp"},
+        output_base=str(agent_dir.parent),
+        recipes_root=FIXTURES,
+    )
+    env_ex_second = (agent_dir / ".env.example").read_text()
+    assert env_ex_first == env_ex_second
+
+
+@pytest.mark.asyncio
 async def test_attach_second_poll_source_errors(poll_agent_dir):
     """Only one poll source per agent — second attach of a different
     poll_source recipe must fail with is_error."""

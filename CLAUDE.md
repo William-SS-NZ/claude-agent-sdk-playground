@@ -70,6 +70,26 @@ Every agent (the builder itself and every generated agent) is defined by four ma
 
 Adding a new builder tool: create `agent_builder/tools/<name>.py`, import and register in `tools/__init__.py`, add to `allowed_tools` in `builder.py` as `"mcp__builder_tools__<name>"`.
 
+### Recipes library
+
+Reusable integration components live under `agent_builder/recipes/{mcps,tools,skills}/<slug>/`. Each recipe is a directory with a `RECIPE.md` carrying frontmatter metadata (name, type, version, description, when_to_use, env_keys, oauth_scopes, allowed_tools_patterns, tags) plus type-specific siblings:
+
+- **mcp** recipes ship `mcp.json` (an `mcp_servers`-shaped entry) and optionally `setup_auth.py.tmpl` when OAuth is required
+- **tool** recipes ship `tool.py` — drop-in `@tool`-decorated code that becomes its own SDK MCP server at the generated agent's composition time
+- **skill** recipes ship `skill.md` — prose appended to the target agent's `AGENT.md` (Phase G / v0.9.2)
+
+Discovery: `list_recipes` returns a compact JSON index for the builder to consult during Phase 2.5 (Recipe Attachment). Materialization: `attach_recipe` appends the recipe to `.recipe_manifest.json` in the agent dir and calls `render_agent` to rebuild `agent.py` from that manifest. For mcp recipes the rebuild fills the `external_mcp_block` with the `mcp.json` config, appends env_keys to `.env.example` with a versioned banner, and (for OAuth) renders `setup_auth.py` from the recipe's `setup_auth.py.tmpl`.
+
+### Template modes
+
+`scaffold_agent` takes `mode: "cli" | "poll"` (Phase F adds `"server"`). Each mode selects a different template:
+
+- **cli** (default) — `templates/agent_main.py.tmpl`. Interactive chat loop with optional `-p/--prompt` and `-s/--spec` for scripted runs.
+- **poll** — `templates/agent_poll.py.tmpl`. Long-poll worker that iterates an `async for incoming in poll_source` loop. `scaffold_agent` renders a `_stub_poll_source()` that raises NotImplementedError; attaching a poll-capable recipe (e.g. `telegram-poll`) rewrites the stub via manifest + render_agent.
+- **server** (Phase F, v0.9.1) — `templates/agent_server.py.tmpl`. FastAPI webhook receiver; refuses to scaffold without a webhook-capable recipe.
+
+All three modes share the same identity bootstrap, spinner, safety hook, and `_drain_responses` — differences are only in the driver loop. Doctor validates each template's expected placeholders via `REQUIRED_PLACEHOLDERS_BY_MODE`. Spinner / format_tool_call / build_claude_md live in `agent_builder/utils.py`; templates import them rather than inlining (R6 dedup).
+
 ### Direct CLI helpers (no SDK, no model cost)
 
 Three commands on `builder.py` short-circuit the SDK entirely — useful for scripts, CI, and post-incident cleanup:
@@ -100,6 +120,8 @@ Tools generated for new agents must:
 - Omit imports and the `_test_mode()` helper — `write_tools` prepends them
 
 The generated `agent.py` (from `templates/agent_main.py.tmpl`) wires a `PreToolUse` hook (`safety_hook`) on `Bash`, `Write`, and `Edit` — blocks destructive Bash patterns (`rm -rf /`, `DROP TABLE`, `DELETE FROM`, `> /dev/sda`, fork bomb) and refuses writes to sensitive paths (`.env`, `.git/`, `pyproject.toml`, `package.json`, `.ssh/`, `id_rsa`, `id_ed25519`, `credentials`). Template placeholders: `{{agent_name}}`, `{{agent_description}}`, `{{builder_version}}`, `{{tools_list}}`, `{{allowed_tools_list}}`, `{{permission_mode}}`, `{{max_turns}}`, `{{max_budget_usd}}`, `{{cli_args_block}}`, `{{cli_dispatch_block}}`, `{{cli_help_epilog}}`. Scaffold validates every expected placeholder is present in the template AND that none survive substitution before writing — a drift in either direction fails loudly rather than producing broken Python.
+
+Generated `agent.py` files include a `RECIPE_PINS = {...}` dict (JSON-shaped) listing every attached recipe and its version. Empty at scaffold time; updated deterministically by `attach_recipe` via the manifest. A future `edit_agent --resync-recipes` action (v0.9.x) will compare pins against current recipe versions and offer updates.
 
 ### Builder workflow (6 phases)
 
