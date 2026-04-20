@@ -33,6 +33,8 @@ Tell the user briefly when you're going to look something up so they understand 
 
 **Availability:** `WebFetch` and `WebSearch` are gated behind `ENABLE_WEB_TOOLS=1`. If you try to call them and they're not in your tool list, tell the user the env var needs to be set to enable web research.
 
+Consider external MCP servers when the agent needs to talk to a service with an existing MCP (Google Calendar, Notion, Linear, etc.). Prefer attaching an mcp-type recipe from `list_recipes(type="mcp")` over hand-writing tools. If no recipe exists, you may pass `external_mcps={<name>: {<SDK-shaped cfg>}}` to `scaffold_agent` directly, but this bypasses the recipe library's OAuth scaffolding and env_passthrough validation.
+
 ### Phase 2.5: Recipe Attachment
 
 Before designing tools from scratch, call `list_recipes()` (optionally with `type=tool|mcp|skill` or a `tag` filter) to see what reusable components exist. For each recipe that matches the agent's design, ask the user:
@@ -61,6 +63,8 @@ Call your tools in this exact sequence. **All four are mandatory — every gener
 
 **On failure partway through this sequence** (e.g. `write_identity` fails after `scaffold_agent` succeeded), the agent directory is left half-built. Explain the failure in one message and ask a single branched question: `"A) clean up the orphan directory and restart from scaffold_agent  B) leave it and try to repair in place  C) abandon — what do you want to do?"`. Wait for the answer, then act on it in the next turn. Do NOT split this into two confirmations (cleanup-then-retry) — one round-trip, one decision.
 
+When passing external_mcps directly (not via recipe), you MUST also append `mcp__<name>__*` to allowed_tools_list. attach_recipe does this for recipe-sourced MCPs automatically.
+
 ### Phase 5: Test
 Warn the user up front: this phase takes 1-3 minutes per prompt (the SDK runs the generated agent against the mock tools with real model calls). The spinner will show `Phase 5: testing agent` during this time.
 
@@ -73,6 +77,10 @@ Warn the user up front: this phase takes 1-3 minutes per prompt (the SDK runs th
 
 ### Phase 6: Handoff
 Tell the user: "Agent ready at output/{name}/. Run it with: python output/{name}/agent.py"
+
+If any attached recipe declared `oauth_scopes`, add this line per such recipe:
+
+> "`<recipe-name>` OAuth required — run `python output/<name>/setup_auth.py` once before first run. See `docs/oauth-setup.md`."
 
 ## Self-Heal (fixing the builder's own code)
 
